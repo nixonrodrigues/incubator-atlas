@@ -37,6 +37,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
+@Deprecated
 public abstract class HierarchicalTypeStore {
 
     final MemRepository repository;
@@ -64,7 +65,7 @@ public abstract class HierarchicalTypeStore {
         this.hierarchicalType = (IConstructableType) hierarchicalType;
         this.repository = repository;
         ImmutableMap.Builder<AttributeInfo, IAttributeStore> b =
-                new ImmutableBiMap.Builder<AttributeInfo, IAttributeStore>();
+                new ImmutableBiMap.Builder<>();
         typeNameList = Lists.newArrayList((String) null);
         ImmutableList<AttributeInfo> l = hierarchicalType.immediateAttrs;
         for (AttributeInfo i : l) {
@@ -72,7 +73,7 @@ public abstract class HierarchicalTypeStore {
         }
         attrStores = b.build();
 
-        ImmutableList.Builder<HierarchicalTypeStore> b1 = new ImmutableList.Builder<HierarchicalTypeStore>();
+        ImmutableList.Builder<HierarchicalTypeStore> b1 = new ImmutableList.Builder<>();
         Set<String> allSuperTypeNames = hierarchicalType.getAllSuperTypeNames();
         for (String s : allSuperTypeNames) {
             b1.add(repository.getStore(s));
@@ -80,8 +81,8 @@ public abstract class HierarchicalTypeStore {
         superTypeStores = b1.build();
 
         nextPos = 0;
-        idPosMap = new HashMap<Id, Integer>();
-        freePositions = new ArrayList<Integer>();
+        idPosMap = new HashMap<>();
+        freePositions = new ArrayList<>();
 
         lock = new ReentrantReadWriteLock();
     }

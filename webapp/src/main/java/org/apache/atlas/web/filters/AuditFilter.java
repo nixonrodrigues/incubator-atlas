@@ -18,13 +18,18 @@
 
 package org.apache.atlas.web.filters;
 
-import com.google.inject.Singleton;
 import org.apache.atlas.AtlasClient;
+import org.apache.atlas.AtlasException;
 import org.apache.atlas.RequestContext;
+import org.apache.atlas.RequestContextV1;
+import org.apache.atlas.metrics.Metrics;
+import org.apache.atlas.util.AtlasRepositoryConfiguration;
 import org.apache.atlas.web.util.DateTimeHelper;
 import org.apache.atlas.web.util.Servlets;
+import org.apache.commons.configuration.Configuration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
 
 import javax.servlet.Filter;
 import javax.servlet.FilterChain;
@@ -42,11 +47,11 @@ import java.util.UUID;
  * This records audit information as part of the filter after processing the request
  * and also introduces a UUID into request and response for tracing requests in logs.
  */
-@Singleton
+@Component
 public class AuditFilter implements Filter {
-
     private static final Logger AUDIT_LOG = LoggerFactory.getLogger("AUDIT");
     private static final Logger LOG = LoggerFactory.getLogger(AuditFilter.class);
+    private static final Logger METRICS_LOG = LoggerFactory.getLogger("METRICS");
 
     @Override
     public void init(FilterConfig filterConfig) throws ServletException {
@@ -73,7 +78,9 @@ public class AuditFilter implements Filter {
             // put the request id into the response so users can trace logs for this request
             ((HttpServletResponse) response).setHeader(AtlasClient.REQUEST_ID, requestId);
             currentThread.setName(oldName);
+            recordMetrics();
             RequestContext.clear();
+            RequestContextV1.clear();
         }
     }
 
@@ -88,9 +95,15 @@ public class AuditFilter implements Filter {
         final String whatURL = Servlets.getRequestURL(httpRequest);
         final String whatAddrs = httpRequest.getLocalAddr();
 
-        LOG.info("Audit: {}/{} performed request {} {} ({}) at time {}", who, fromAddress, whatRequest, whatURL,
-                whatAddrs, whenISO9601);
-        audit(who, fromAddress, whatRequest, fromHost, whatURL, whatAddrs, whenISO9601);
+        final String whatUrlPath = httpRequest.getRequestURL().toString();//url path without query string
+
+        if (!isOperationExcludedFromAudit(whatRequest, whatUrlPath.toLowerCase(), null)) {
+            audit(who, fromAddress, whatRequest, fromHost, whatURL, whatAddrs, whenISO9601);
+        } else {
+            if(LOG.isDebugEnabled()) {
+                LOG.debug(" Skipping Audit for {} ", whatURL);
+            }
+        }
     }
 
     private String getUserFromRequest(HttpServletRequest httpRequest) {
@@ -103,6 +116,22 @@ public class AuditFilter implements Filter {
             String whenISO9601) {
         AUDIT_LOG.info("Audit: {}/{}-{} performed request {} {} ({}) at time {}", who, fromAddress, fromHost, whatRequest, whatURL,
                 whatAddrs, whenISO9601);
+    }
+
+    public static void recordMetrics() {
+        //record metrics
+        Metrics requestMetrics = RequestContext.getMetrics();
+        if (!requestMetrics.isEmpty()) {
+            METRICS_LOG.info("{}", requestMetrics);
+        }
+     }
+
+    boolean isOperationExcludedFromAudit(String requestHttpMethod, String requestOperation, Configuration config) {
+       try {
+        return AtlasRepositoryConfiguration.isExcludedFromAudit(config, requestHttpMethod, requestOperation);
+    } catch (AtlasException e) {
+        return false;
+    }
     }
 
     @Override

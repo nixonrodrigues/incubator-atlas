@@ -22,16 +22,12 @@
     <parent>
         <artifactId>apache-atlas</artifactId>
         <groupId>org.apache.atlas</groupId>
-        <version>0.8-incubating-SNAPSHOT</version>
+        <version>0.9-incubating-SNAPSHOT</version>
     </parent>
     <artifactId>atlas-common</artifactId>
     <description>Apache Atlas Common</description>
     <name>Apache Atlas Common</name>
     <packaging>jar</packaging>
-
-    <properties>
-        <checkstyle.failOnViolation>true</checkstyle.failOnViolation>
-    </properties>
 
     <dependencies>
         <dependency>
@@ -40,8 +36,8 @@
         </dependency>
 
         <dependency>
-            <groupId>com.google.inject</groupId>
-            <artifactId>guice</artifactId>
+            <groupId>javax.inject</groupId>
+            <artifactId>javax.inject</artifactId>
         </dependency>
 
         <dependency>
@@ -69,6 +65,17 @@
             <artifactId>spring-beans</artifactId>
             <version>${spring.version}</version>
         </dependency>
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-context</artifactId>
+            <version>${spring.version}</version>
+            <scope>compile</scope>
+        </dependency>
 
+        <dependency>
+            <groupId>com.google.guava</groupId>
+            <artifactId>guava</artifactId>
+            <version>${guava.version}</version>
+        </dependency>
     </dependencies>
 </project>

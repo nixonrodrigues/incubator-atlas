@@ -18,12 +18,13 @@
 
 package org.apache.atlas.web.security;
 
-import java.util.List;
-import javax.annotation.PostConstruct;
 import org.apache.atlas.ApplicationProperties;
 import org.apache.atlas.web.model.User;
 import org.apache.commons.configuration.Configuration;
-import org.apache.log4j.Logger;
+import org.apache.commons.configuration.ConfigurationConverter;
+import org.apache.commons.lang.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.ldap.core.support.LdapContextSource;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
@@ -37,11 +38,15 @@ import org.springframework.security.ldap.search.FilterBasedLdapUserSearch;
 import org.springframework.security.ldap.userdetails.DefaultLdapAuthoritiesPopulator;
 import org.springframework.stereotype.Component;
 
+import javax.annotation.PostConstruct;
+import java.util.List;
+import java.util.Properties;
+
 @Component
 public class AtlasLdapAuthenticationProvider extends
         AtlasAbstractAuthenticationProvider {
-    private static Logger LOG = Logger
-            .getLogger(AtlasLdapAuthenticationProvider.class);
+    private static Logger LOG = LoggerFactory.getLogger(AtlasLdapAuthenticationProvider.class);
+    private boolean isDebugEnabled = LOG.isDebugEnabled();
 
     private String ldapURL;
     private String ldapUserDNPattern;
@@ -65,15 +70,27 @@ public class AtlasLdapAuthenticationProvider extends
     public Authentication authenticate(Authentication authentication)
             throws AuthenticationException {
         try {
-            return getLdapBindAuthentication(authentication);
+            authentication = getLdapBindAuthentication(authentication);
+            if (authentication != null && authentication.isAuthenticated()) {
+                return authentication;
+            } else {
+                authentication = getLdapAuthentication(authentication);
+                if (authentication != null && authentication.isAuthenticated()) {
+                    return authentication;
+                }
+            }
         } catch (Exception e) {
             throw new AtlasAuthenticationException(e.getMessage(), e.getCause());
         }
+        return authentication;
     }
 
     private Authentication getLdapBindAuthentication(
-            Authentication authentication) throws Exception {
+            Authentication authentication) {
         try {
+            if (isDebugEnabled) {
+                LOG.debug("==> AtlasLdapAuthenticationProvider getLdapBindAuthentication");
+            }
             String userName = authentication.getName();
             String userPassword = "";
             if (authentication.getCredentials() != null) {
@@ -113,39 +130,129 @@ public class AtlasLdapAuthenticationProvider extends
                 }
                 return authentication;
             } else {
-                throw new AtlasAuthenticationException(
-                        "LDAP Authentication::userName or userPassword is null or empty for userName "
-                                + userName);
+                LOG.error("LDAP Authentication::userName or userPassword is null or empty for userName "
+                        + userName);
             }
         } catch (Exception e) {
-            LOG.error("LDAP Authentication Failed:", e);
-            throw new AtlasAuthenticationException(
-                    "LDAP Authentication Failed", e);
+            LOG.error(" getLdapBindAuthentication LDAP Authentication Failed:", e);
         }
+        if (isDebugEnabled) {
+            LOG.debug("<== AtlasLdapAuthenticationProvider getLdapBindAuthentication");
+        }
+        return authentication;
+    }
+
+    private Authentication getLdapAuthentication(Authentication authentication) {
+
+        if (isDebugEnabled) {
+            LOG.debug("==> AtlasLdapAuthenticationProvider getLdapAuthentication");
+        }
+
+        try {
+            // taking the user-name and password from the authentication
+            // object.
+            String userName = authentication.getName();
+            String userPassword = "";
+            if (authentication.getCredentials() != null) {
+                userPassword = authentication.getCredentials().toString();
+            }
+
+            // populating LDAP context source with LDAP URL and user-DN-pattern
+            LdapContextSource ldapContextSource = new DefaultSpringSecurityContextSource(
+                    ldapURL);
+
+            ldapContextSource.setCacheEnvironmentProperties(false);
+            ldapContextSource.setAnonymousReadOnly(true);
+
+            // Creating BindAuthenticator using Ldap Context Source.
+            BindAuthenticator bindAuthenticator = new BindAuthenticator(
+                    ldapContextSource);
+            //String[] userDnPatterns = new String[] { rangerLdapUserDNPattern };
+            String[] userDnPatterns = ldapUserDNPattern.split(";");
+            bindAuthenticator.setUserDnPatterns(userDnPatterns);
+
+            LdapAuthenticationProvider ldapAuthenticationProvider = null;
+
+            if (!StringUtils.isEmpty(ldapGroupSearchBase) && !StringUtils.isEmpty(ldapGroupSearchFilter)) {
+                // Creating LDAP authorities populator using Ldap context source and
+                // Ldap group search base.
+                // populating LDAP authorities populator with group search
+                // base,group role attribute, group search filter.
+                DefaultLdapAuthoritiesPopulator defaultLdapAuthoritiesPopulator = new DefaultLdapAuthoritiesPopulator(
+                        ldapContextSource, ldapGroupSearchBase);
+                defaultLdapAuthoritiesPopulator.setGroupRoleAttribute(ldapGroupRoleAttribute);
+                defaultLdapAuthoritiesPopulator.setGroupSearchFilter(ldapGroupSearchFilter);
+                defaultLdapAuthoritiesPopulator.setIgnorePartialResultException(true);
+
+                // Creating Ldap authentication provider using BindAuthenticator and Ldap authentication populator
+                ldapAuthenticationProvider = new LdapAuthenticationProvider(
+                        bindAuthenticator, defaultLdapAuthoritiesPopulator);
+            } else {
+                ldapAuthenticationProvider = new LdapAuthenticationProvider(bindAuthenticator);
+            }
+
+            // getting user authenticated
+            if (userName != null && userPassword != null
+                    && !userName.trim().isEmpty()
+                    && !userPassword.trim().isEmpty()) {
+                final List<GrantedAuthority> grantedAuths = getAuthorities(userName);
+
+                final UserDetails principal = new User(userName, userPassword,
+                        grantedAuths);
+
+                final Authentication finalAuthentication = new UsernamePasswordAuthenticationToken(
+                        principal, userPassword, grantedAuths);
+
+                authentication = ldapAuthenticationProvider
+                        .authenticate(finalAuthentication);
+                if (groupsFromUGI) {
+                    authentication = getAuthenticationWithGrantedAuthorityFromUGI(authentication);
+                }
+                return authentication;
+            } else {
+                return authentication;
+            }
+        } catch (Exception e) {
+            LOG.error("getLdapAuthentication LDAP Authentication Failed:", e);
+        }
+        if (isDebugEnabled) {
+            LOG.debug("<== AtlasLdapAuthenticationProvider getLdapAuthentication");
+        }
+        return authentication;
     }
 
     private void setLdapProperties() {
         try {
             Configuration configuration = ApplicationProperties.get();
-
-            ldapURL = configuration.getString("atlas.authentication.method.ldap.url");
-            ldapUserDNPattern = configuration.getString(
-                    "atlas.authentication.method.ldap.userDNpattern");
-            ldapGroupSearchBase = configuration.getString(
-                    "atlas.authentication.method.ldap.groupSearchBase");
-            ldapGroupSearchFilter = configuration.getString(
-                    "atlas.authentication.method.ldap.groupSearchFilter");
-            ldapGroupRoleAttribute = configuration.getString(
-                    "atlas.authentication.method.ldap.groupRoleAttribute");
-            ldapBindDN = configuration.getString("atlas.authentication.method.ldap.bind.dn");
-            ldapBindPassword = configuration.getString(
-                    "atlas.authentication.method.ldap.bind.password");
-            ldapDefaultRole = configuration.getString("atlas.authentication.method.ldap.default.role");
-            ldapUserSearchFilter = configuration.getString(
-                    "atlas.authentication.method.ldap.user.searchfilter");
-            ldapReferral = configuration.getString("atlas.authentication.method.ldap.ad.referral");
-            ldapBase = configuration.getString("atlas.authentication.method.ldap.base.dn");
+            Properties properties = ConfigurationConverter.getProperties(configuration.subset("atlas.authentication.method.ldap"));
+            ldapURL = properties.getProperty("url");
+            ldapUserDNPattern = properties.getProperty("userDNpattern");
+            ldapGroupSearchBase = properties.getProperty("groupSearchBase");
+            ldapGroupSearchFilter = properties.getProperty("groupSearchFilter");
+            ldapGroupRoleAttribute = properties.getProperty("groupRoleAttribute");
+            ldapBindDN = properties.getProperty("bind.dn");
+            ldapBindPassword = properties.getProperty("bind.password");
+            ldapDefaultRole = properties.getProperty("default.role");
+            ldapUserSearchFilter = properties.getProperty("user.searchfilter");
+            ldapReferral = properties.getProperty("referral");
+            ldapBase = properties.getProperty("base.dn");
             groupsFromUGI = configuration.getBoolean("atlas.authentication.method.ldap.ugi-groups", true);
+
+            if(LOG.isDebugEnabled()) {
+                LOG.debug("AtlasLdapAuthenticationProvider{" +
+                        "ldapURL='" + ldapURL + '\'' +
+                        ", ldapUserDNPattern='" + ldapUserDNPattern + '\'' +
+                        ", ldapGroupSearchBase='" + ldapGroupSearchBase + '\'' +
+                        ", ldapGroupSearchFilter='" + ldapGroupSearchFilter + '\'' +
+                        ", ldapGroupRoleAttribute='" + ldapGroupRoleAttribute + '\'' +
+                        ", ldapBindDN='" + ldapBindDN + '\'' +
+                        ", ldapDefaultRole='" + ldapDefaultRole + '\'' +
+                        ", ldapUserSearchFilter='" + ldapUserSearchFilter + '\'' +
+                        ", ldapReferral='" + ldapReferral + '\'' +
+                        ", ldapBase='" + ldapBase + '\'' +
+                        ", groupsFromUGI=" + groupsFromUGI +
+                        '}');
+            }
 
         } catch (Exception e) {
             LOG.error("Exception while setLdapProperties", e);

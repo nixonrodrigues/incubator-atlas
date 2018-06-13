@@ -17,49 +17,71 @@
  */
 package org.apache.atlas.web.security;
 
-import javax.annotation.PostConstruct;
-
+import org.apache.atlas.ApplicationProperties;
+import org.apache.commons.configuration.Configuration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.stereotype.Component;
-import org.apache.atlas.ApplicationProperties;
-import org.apache.commons.configuration.Configuration;
+
+import javax.annotation.PostConstruct;
+import javax.inject.Inject;
 
 @Component
-public class AtlasAuthenticationProvider extends
-        AtlasAbstractAuthenticationProvider {
+public class AtlasAuthenticationProvider extends AtlasAbstractAuthenticationProvider {
     private static final Logger LOG = LoggerFactory
             .getLogger(AtlasAuthenticationProvider.class);
 
     private boolean fileAuthenticationMethodEnabled = true;
+    private boolean pamAuthenticationEnabled = false;
     private String ldapType = "NONE";
     public static final String FILE_AUTH_METHOD = "atlas.authentication.method.file";
+    public static final String LDAP_AUTH_METHOD = "atlas.authentication.method.ldap";
     public static final String LDAP_TYPE = "atlas.authentication.method.ldap.type";
+    public static final String PAM_AUTH_METHOD = "atlas.authentication.method.pam";
 
-    @Autowired
-    AtlasLdapAuthenticationProvider ldapAuthenticationProvider;
 
-    @Autowired
-    AtlasFileAuthenticationProvider fileAuthenticationProvider;
 
-    @Autowired
-    AtlasADAuthenticationProvider adAuthenticationProvider;
+    private boolean ssoEnabled = false;
+
+    final AtlasLdapAuthenticationProvider ldapAuthenticationProvider;
+
+    final AtlasFileAuthenticationProvider fileAuthenticationProvider;
+
+    final AtlasADAuthenticationProvider adAuthenticationProvider;
+
+    final AtlasPamAuthenticationProvider pamAuthenticationProvider;
+
+    @Inject
+    public AtlasAuthenticationProvider(AtlasLdapAuthenticationProvider ldapAuthenticationProvider,
+                                       AtlasFileAuthenticationProvider fileAuthenticationProvider,
+                                       AtlasADAuthenticationProvider adAuthenticationProvider,
+                                       AtlasPamAuthenticationProvider pamAuthenticationProvider) {
+        this.ldapAuthenticationProvider = ldapAuthenticationProvider;
+        this.fileAuthenticationProvider = fileAuthenticationProvider;
+        this.adAuthenticationProvider = adAuthenticationProvider;
+        this.pamAuthenticationProvider = pamAuthenticationProvider;
+    }
 
     @PostConstruct
     void setAuthenticationMethod() {
         try {
             Configuration configuration = ApplicationProperties.get();
 
-            this.fileAuthenticationMethodEnabled = configuration.getBoolean(
-                    FILE_AUTH_METHOD, true);
-            this.ldapType = configuration.getString(LDAP_TYPE, "NONE");
+            this.fileAuthenticationMethodEnabled = configuration.getBoolean(FILE_AUTH_METHOD, true);
+
+            this.pamAuthenticationEnabled = configuration.getBoolean(PAM_AUTH_METHOD, false);
+
+            boolean ldapAuthenticationEnabled = configuration.getBoolean(LDAP_AUTH_METHOD, false);
+
+            if (ldapAuthenticationEnabled) {
+                this.ldapType = configuration.getString(LDAP_TYPE, "NONE");
+            } else {
+                this.ldapType = "NONE";
+            }
         } catch (Exception e) {
-            LOG.error(
-                    "Error while getting atlas.login.method application properties",
-                    e);
+            LOG.error("Error while getting atlas.login.method application properties", e);
         }
     }
 
@@ -67,24 +89,40 @@ public class AtlasAuthenticationProvider extends
     public Authentication authenticate(Authentication authentication)
             throws AuthenticationException {
 
-        if (ldapType.equalsIgnoreCase("LDAP")) {
-            try {
-                authentication = ldapAuthenticationProvider.authenticate(authentication);
-            } catch (Exception ex) {
-                LOG.error("Error while LDAP authentication", ex);
+        if(ssoEnabled){
+            if (authentication != null){
+                authentication = getSSOAuthentication(authentication);
+                if(authentication!=null && authentication.isAuthenticated()){
+                    return authentication;
+                }
             }
-        } else if (ldapType.equalsIgnoreCase("AD")) {
-            try {
-                authentication = adAuthenticationProvider.authenticate(authentication);
-            } catch (Exception ex) {
-                LOG.error("Error while AD authentication", ex);
+        } else {
+
+            if (ldapType.equalsIgnoreCase("LDAP")) {
+                try {
+                    authentication = ldapAuthenticationProvider.authenticate(authentication);
+                } catch (Exception ex) {
+                    LOG.error("Error while LDAP authentication", ex);
+                }
+            } else if (ldapType.equalsIgnoreCase("AD")) {
+                try {
+                    authentication = adAuthenticationProvider.authenticate(authentication);
+                } catch (Exception ex) {
+                    LOG.error("Error while AD authentication", ex);
+                }
+            } else if (pamAuthenticationEnabled) {
+                try {
+                    authentication = pamAuthenticationProvider.authenticate(authentication);
+                } catch (Exception ex) {
+                    LOG.error("Error while PAM authentication", ex);
+                }
             }
         }
 
         if (authentication != null) {
             if (authentication.isAuthenticated()) {
                 return authentication;
-            } else if (fileAuthenticationMethodEnabled) {  // If the LDAP/AD authentication fails try the local filebased login method
+            } else if (fileAuthenticationMethodEnabled) {  // If the LDAP/AD/PAM authentication fails try the local filebased login method
                 authentication = fileAuthenticationProvider.authenticate(authentication);
 
                 if (authentication != null && authentication.isAuthenticated()) {
@@ -97,4 +135,15 @@ public class AtlasAuthenticationProvider extends
         throw new AtlasAuthenticationException("Authentication failed.");
     }
 
+    public boolean isSsoEnabled() {
+        return ssoEnabled;
+    }
+
+    public void setSsoEnabled(boolean ssoEnabled) {
+        this.ssoEnabled = ssoEnabled;
+    }
+
+    private Authentication getSSOAuthentication(Authentication authentication) throws AuthenticationException{
+        return authentication;
+    }
 }

@@ -43,12 +43,24 @@
         </layout>
     </appender>
 
-    <logger name="org.apache.atlas" additivity="false">
-        <level value="info"/>
-        <appender-ref ref="FILE"/>
-    </logger>
+    <appender name="METRICS" class="org.apache.log4j.DailyRollingFileAppender">
+        <param name="File" value="${atlas.log.dir}/metric.log"/>
+        <param name="Append" value="true"/>
+        <layout class="org.apache.log4j.PatternLayout">
+            <param name="ConversionPattern" value="%d %x %m%n"/>
+        </layout>
+    </appender>
 
-    <!-- uncomment this block to generate performance traces
+    <appender name="FAILED" class="org.apache.log4j.DailyRollingFileAppender">
+        <param name="File" value="${atlas.log.dir}/failed.log"/>
+        <param name="Append" value="true"/>
+        <layout class="org.apache.log4j.PatternLayout">
+            <param name="ConversionPattern" value="%d %m"/>
+        </layout>
+    </appender>
+
+    <!-- Uncomment the following for perf logs -->
+    <!--
     <appender name="perf_appender" class="org.apache.log4j.DailyRollingFileAppender">
         <param name="file" value="${atlas.log.dir}/atlas_perf.log" />
         <param name="datePattern" value="'.'yyyy-MM-dd" />
@@ -64,9 +76,29 @@
     </logger>
     -->
 
-    <logger name="com.thinkaurelius.titan" additivity="false">
-        <level value="warn"/>
+    <logger name="org.apache.atlas" additivity="false">
+        <level value="info"/>
         <appender-ref ref="FILE"/>
+    </logger>
+
+    <logger name="com.thinkaurelius.titan" additivity="false">
+        <level value="info"/>
+        <appender-ref ref="FILE"/>
+    </logger>
+
+    <logger name="org.springframework" additivity="false">
+        <level value="warn"/>
+        <appender-ref ref="console"/>
+    </logger>
+
+    <logger name="org.eclipse" additivity="false">
+        <level value="warn"/>
+        <appender-ref ref="console"/>
+    </logger>
+
+    <logger name="com.sun.jersey" additivity="false">
+        <level value="warn"/>
+        <appender-ref ref="console"/>
     </logger>
 
     <!-- to avoid logs - The configuration log.flush.interval.messages = 1 was supplied but isn't a known config -->
@@ -76,6 +108,16 @@
     </logger>
 
     <logger name="AUDIT" additivity="false">
+        <level value="info"/>
+        <appender-ref ref="AUDIT"/>
+    </logger>
+
+    <logger name="METRICS" additivity="false">
+        <level value="debug"/>
+        <appender-ref ref="METRICS"/>
+    </logger>
+
+    <logger name="FAILED" additivity="false">
         <level value="info"/>
         <appender-ref ref="AUDIT"/>
     </logger>

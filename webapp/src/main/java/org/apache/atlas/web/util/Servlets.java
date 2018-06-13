@@ -20,7 +20,9 @@ package org.apache.atlas.web.util;
 
 import org.apache.atlas.AtlasClient;
 import org.apache.atlas.LocalServletRequest;
+import org.apache.atlas.exception.AtlasBaseException;
 import org.apache.atlas.utils.ParamChecker;
+import org.apache.commons.collections.MapUtils;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.StringEscapeUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -35,10 +37,11 @@ import javax.servlet.http.HttpServletRequest;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 import java.io.IOException;
-import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.nio.charset.Charset;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Utility functions for dealing with servlets.
@@ -52,6 +55,7 @@ public final class Servlets {
     }
 
     public static final String JSON_MEDIA_TYPE = MediaType.APPLICATION_JSON + "; charset=UTF-8";
+    public static final String BINARY = MediaType.APPLICATION_OCTET_STREAM;
 
     /**
      * Returns the user of the given request.
@@ -130,22 +134,18 @@ public final class Servlets {
         return url.toString();
     }
 
-    public static Response getErrorResponse(Throwable e, Response.Status status) {
+    public static Response getErrorResponse(AtlasBaseException e) {
         String message = e.getMessage() == null ? "Failed with " + e.getClass().getName() : e.getMessage();
-        Response response = getErrorResponse(message, status);
-        JSONObject responseJson = (JSONObject) response.getEntity();
-        try {
-            responseJson.put(AtlasClient.STACKTRACE, printStackTrace(e));
-        } catch (JSONException e1) {
-            LOG.warn("Could not construct error Json rensponse", e1);
-        }
+        Response response = getErrorResponse(message, e.getAtlasErrorCode().getHttpCode());
+
         return response;
     }
 
-    private static String printStackTrace(Throwable t) {
-        StringWriter sw = new StringWriter();
-        t.printStackTrace(new PrintWriter(sw));
-        return sw.toString();
+    public static Response getErrorResponse(Throwable e, Response.Status status) {
+        String message = e.getMessage() == null ? "Failed with " + e.getClass().getName() : e.getMessage();
+        Response response = getErrorResponse(message, status);
+
+        return response;
     }
 
     public static Response getErrorResponse(String message, Response.Status status) {
@@ -178,5 +178,32 @@ public final class Servlets {
     public static String escapeJsonString(String inputStr) {
         ParamChecker.notNull(inputStr, "Input String cannot be null");
         return StringEscapeUtils.escapeJson(inputStr);
+    }
+
+    public static String getHostName(HttpServletRequest httpServletRequest) {
+        return httpServletRequest.getLocalName();
+    }
+
+    public static String getUserName(HttpServletRequest httpServletRequest) throws IOException {
+        return httpServletRequest.getRemoteUser();
+    }
+
+    public static Map<String, Object> getParameterMap(HttpServletRequest request) {
+        Map<String, Object> attributes = new HashMap<>();
+
+        if (MapUtils.isNotEmpty(request.getParameterMap())) {
+            for (Map.Entry<String, String[]> e : request.getParameterMap().entrySet()) {
+                String key = e.getKey();
+
+                if (key != null) {
+                    String[] values = e.getValue();
+                    String   value  = values != null && values.length > 0 ? values[0] : null;
+
+                    attributes.put(key, value);
+                }
+            }
+        }
+
+        return attributes;
     }
 }

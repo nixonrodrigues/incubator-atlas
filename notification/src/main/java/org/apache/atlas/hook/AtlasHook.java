@@ -19,13 +19,12 @@
 package org.apache.atlas.hook;
 
 import com.google.common.annotations.VisibleForTesting;
-import com.google.inject.Guice;
-import com.google.inject.Injector;
 import org.apache.atlas.ApplicationProperties;
+import org.apache.atlas.kafka.NotificationProvider;
 import org.apache.atlas.notification.NotificationException;
 import org.apache.atlas.notification.NotificationInterface;
-import org.apache.atlas.notification.NotificationModule;
 import org.apache.atlas.notification.hook.HookNotification;
+import org.apache.atlas.security.InMemoryJAASConfiguration;
 import org.apache.atlas.typesystem.Referenceable;
 import org.apache.atlas.typesystem.json.InstanceSerialization;
 import org.apache.commons.configuration.Configuration;
@@ -50,10 +49,12 @@ public abstract class AtlasHook {
 
     protected static Configuration atlasProperties;
 
-    protected static NotificationInterface notifInterface;
+    protected static NotificationInterface notificationInterface;
 
     private static boolean logFailedMessages;
     private static FailedMessagesLogger failedMessagesLogger;
+    private static int notificationRetryInterval;
+    public static final String ATLAS_NOTIFICATION_RETRY_INTERVAL = "atlas.notification.hook.retry.interval";
 
     public static final String ATLAS_NOTIFICATION_FAILED_MESSAGES_FILENAME_KEY =
             "atlas.notification.failed.messages.filename";
@@ -76,8 +77,14 @@ public abstract class AtlasHook {
             failedMessagesLogger.init();
         }
 
-        Injector injector = Guice.createInjector(new NotificationModule());
-        notifInterface = injector.getInstance(NotificationInterface.class);
+        if (!isLoginKeytabBased()) {
+            if (isLoginTicketBased()) {
+                InMemoryJAASConfiguration.setConfigSectionRedirect("KafkaClient", "ticketBased-KafkaClient");
+            }
+        }
+
+        notificationRetryInterval = atlasProperties.getInt(ATLAS_NOTIFICATION_RETRY_INTERVAL, 1000);
+        notificationInterface = NotificationProvider.get();
 
         LOG.info("Created Atlas Hook");
     }
@@ -104,11 +111,11 @@ public abstract class AtlasHook {
      * De-duping of entities is done on server side depending on the
      * unique attribute on the entities.
      *
-     * @param messages hook notification messages
+     * @param messages   hook notification messages
      * @param maxRetries maximum number of retries while sending message to messaging system
      */
     public static void notifyEntities(List<HookNotification.HookNotificationMessage> messages, int maxRetries) {
-        notifyEntitiesInternal(messages, maxRetries, notifInterface, logFailedMessages, failedMessagesLogger);
+        notifyEntitiesInternal(messages, maxRetries, notificationInterface, logFailedMessages, failedMessagesLogger);
     }
 
     @VisibleForTesting
@@ -128,7 +135,14 @@ public abstract class AtlasHook {
             } catch (Exception e) {
                 numRetries++;
                 if (numRetries < maxRetries) {
-                    LOG.info("Failed to notify atlas for entity {}. Retrying", message, e);
+                    LOG.error("Failed to send notification - attempt #{}; error={}", numRetries, e.getMessage());
+                    try {
+                        LOG.debug("Sleeping for {} ms before retry", notificationRetryInterval);
+                        Thread.sleep(notificationRetryInterval);
+                    } catch (InterruptedException ie) {
+                        LOG.error("Notification hook thread sleep interrupted");
+                    }
+
                 } else {
                     if (shouldLogFailedMessages && e instanceof NotificationException) {
                         List<String> failedMessages = ((NotificationException) e).getFailedMessages();
@@ -159,6 +173,7 @@ public abstract class AtlasHook {
 
     /**
      * Returns the logged in user.
+     *
      * @return
      */
     public static String getUser() {
@@ -179,18 +194,49 @@ public abstract class AtlasHook {
 
     public static String getUser(String userName, UserGroupInformation ugi) {
         if (StringUtils.isNotEmpty(userName)) {
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("Returning userName {}", userName);
+            }
             return userName;
         }
 
         if (ugi != null && StringUtils.isNotEmpty(ugi.getShortUserName())) {
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("Returning ugi.getShortUserName {}", userName);
+            }
             return ugi.getShortUserName();
         }
 
         try {
             return UserGroupInformation.getCurrentUser().getShortUserName();
         } catch (IOException e) {
-            LOG.warn("Failed for UserGroupInformation.getCurrentUser()");
+            LOG.warn("Failed for UserGroupInformation.getCurrentUser() ", e);
             return System.getProperty("user.name");
         }
     }
+
+    private static boolean isLoginKeytabBased() {
+        boolean ret = false;
+
+        try {
+            ret = UserGroupInformation.isLoginKeytabBased();
+        } catch (Exception excp) {
+            LOG.warn("Error in determining keytab for KafkaClient-JAAS config", excp);
+        }
+
+        return ret;
+    }
+
+    private static boolean isLoginTicketBased() {
+        boolean ret = false;
+
+        try {
+            ret = UserGroupInformation.isLoginTicketBased();
+        } catch (Exception excp) {
+            LOG.warn("Error in determining ticket-cache for KafkaClient-JAAS config", excp);
+        }
+
+        return ret;
+    }
+
 }

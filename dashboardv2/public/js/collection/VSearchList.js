@@ -19,20 +19,37 @@
 define(['require',
     'utils/Globals',
     'collection/BaseCollection',
-    'models/VSearch'
-], function(require, Globals, BaseCollection, VSearch) {
+    'models/VSearch',
+    'utils/UrlLinks'
+], function(require, Globals, BaseCollection, VSearch, UrlLinks) {
     'use strict';
     var VSearchList = BaseCollection.extend(
         //Prototypal attributes
         {
-            url: Globals.baseURL + '/api/atlas/discovery/search',
+            url: UrlLinks.searchApiUrl(),
 
             model: VSearch,
 
             initialize: function() {
                 this.modelName = 'VSearch';
-                this.modelAttrName = 'results';
-                this.bindErrorEvents();
+                this.modelAttrName = '';
+            },
+            parseRecords: function(resp, options) {
+                this.queryType = resp.queryType;
+                this.queryText = resp.queryText;
+                this.referredEntities = resp.referredEntities;
+                return resp.entities ? resp.entities : [];
+            },
+            getBasicRearchResult: function(options) {
+                var url = UrlLinks.searchApiUrl('basic');
+
+                options = _.extend({
+                    contentType: 'application/json',
+                    dataType: 'json',
+                }, options);
+                options.data = JSON.stringify(options.data);
+
+                return this.constructor.nonCrudOperation.call(this, url, 'POST', options);
             }
         },
         //Static Class Members

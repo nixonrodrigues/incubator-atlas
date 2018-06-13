@@ -18,8 +18,9 @@
 
 package org.apache.atlas.query
 
+import org.apache.atlas.DBSandboxer
 import org.apache.atlas.repository.BaseTest
-import org.testng.annotations.{BeforeMethod,Test}
+import org.testng.annotations.{BeforeMethod, Listeners, Test}
 
 
 class ParserTest extends BaseTest {
@@ -90,6 +91,10 @@ class ParserTest extends BaseTest {
         " table where name = 'tableoq8ty'," +
         " db where name = 'default' and clusterName = 'test'").right.get.toString
     )
+  }
+
+  @Test def testorder_by: Unit = {
+    println(QueryParser.apply("from DB order by columnA").right.get.toString)
   }
 
 }

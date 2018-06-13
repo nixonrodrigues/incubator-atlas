@@ -18,11 +18,12 @@
 
 define(['require',
     'utils/Globals',
-    'models/BaseModel'
-], function(require, Globals, VBaseModel) {
+    'models/BaseModel',
+    'utils/UrlLinks'
+], function(require, Globals, VBaseModel, UrlLinks) {
     'use strict';
     var VCommon = VBaseModel.extend({
-        urlRoot: Globals.baseURL + '',
+        urlRoot: UrlLinks.baseUrl + '',
 
         defaults: {},
 
@@ -32,7 +33,6 @@ define(['require',
 
         initialize: function() {
             this.modelName = 'VCommon';
-            this.bindErrorEvents();
         },
         toString: function() {
             return this.get('name');
@@ -41,7 +41,7 @@ define(['require',
          * Non - CRUD operations
          *************************/
         aboutUs: function(url, options) {
-            var url = Globals.baseURL + url;
+            var url = url;
             options = _.extend({
                 contentType: 'application/json',
                 dataType: 'json'

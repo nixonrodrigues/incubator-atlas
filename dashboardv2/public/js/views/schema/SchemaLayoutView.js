@@ -23,8 +23,10 @@ define(['require',
     'utils/Utils',
     'utils/CommonViewFunction',
     'utils/Messages',
-    'utils/Globals'
-], function(require, Backbone, SchemaTableLayoutViewTmpl, VSchemaList, Utils, CommonViewFunction, Messages, Globals) {
+    'utils/Globals',
+    'utils/Enums',
+    'utils/UrlLinks'
+], function(require, Backbone, SchemaTableLayoutViewTmpl, VSchemaList, Utils, CommonViewFunction, Messages, Globals, Enums, UrlLinks) {
     'use strict';
 
     var SchemaTableLayoutView = Backbone.Marionette.LayoutView.extend(
@@ -36,7 +38,7 @@ define(['require',
 
             /** Layout sub regions */
             regions: {
-                RTagLayoutView: "#r_tagLayoutView",
+                RSchemaTableLayoutView: "#r_schemaTableLayoutView",
             },
             /** ui selector cache */
             ui: {
@@ -44,13 +46,16 @@ define(['require',
                 addTag: "[data-id='addTag']",
                 addTerm: '[data-id="addTerm"]',
                 showMoreLess: '[data-id="showMoreLess"]',
-                showMoreLessTerm: '[data-id="showMoreLessTerm"]'
+                showMoreLessTerm: '[data-id="showMoreLessTerm"]',
+                addAssignTag: "[data-id='addAssignTag']",
+                checkDeletedEntity: "[data-id='checkDeletedEntity']"
             },
             /** ui events hash */
             events: function() {
                 var events = {};
-                events["click " + this.ui.addTag] = 'addTagModalView';
+                events["click " + this.ui.addTag] = 'checkedValue';
                 events["click " + this.ui.addTerm] = 'checkedValue';
+                events["click " + this.ui.addAssignTag] = 'checkedValue';
                 events["click " + this.ui.tagClick] = function(e) {
                     if (e.target.nodeName.toLocaleLowerCase() == "i") {
                         this.onClickTagCross(e);
@@ -80,6 +85,8 @@ define(['require',
                         $(e.currentTarget).find('span').text('Show less');
                     }
                 };
+                events["click " + this.ui.checkDeletedEntity] = 'onCheckDeletedEntity';
+
                 return events;
             },
             /**
@@ -87,15 +94,15 @@ define(['require',
              * @constructs
              */
             initialize: function(options) {
-                _.extend(this, _.pick(options, 'globalVent', 'guid', 'vent'));
+                _.extend(this, _.pick(options, 'guid', 'entityDefCollection', 'attribute', 'referredEntities', 'fetchCollection', 'enumDefCollection'));
                 this.schemaCollection = new VSchemaList([], {});
-                this.schemaCollection.url = "/api/atlas/lineage/" + this.guid + "/schema";
                 this.commonTableOptions = {
                     collection: this.schemaCollection,
                     includeFilter: false,
                     includePagination: true,
                     includePageSize: false,
                     includeFooterRecords: true,
+                    includeOrderAbleColumns: false,
                     gridOpts: {
                         className: "table table-hover backgrid table-quickMenu",
                         emptyText: 'No records found!'
@@ -110,37 +117,66 @@ define(['require',
                 this.listenTo(this.schemaCollection, 'backgrid:selected', function(model, checked) {
                     if (checked === true) {
                         model.set("isEnable", true);
-                        this.$('.multiSelect').show();
                     } else {
                         model.set("isEnable", false);
-                        this.$('.multiSelect').hide();
                     }
                     this.arr = [];
                     var that = this;
                     this.schemaCollection.find(function(item) {
+                        var obj = item.toJSON();
                         if (item.get('isEnable')) {
-                            var term = [];
                             that.arr.push({
-                                id: item.get("$id$"),
-                                model: item
+                                id: obj.guid,
+                                model: obj
                             });
                         }
                     });
+                    if (this.arr.length > 0) {
+                        if (Globals.taxonomy) {
+                            this.$('.multiSelectTerm').show();
+                        }
+                        this.$('.multiSelectTag').show();
+                    } else {
+                        if (Globals.taxonomy) {
+                            this.$('.multiSelectTerm').hide();
+                        }
+                        this.$('.multiSelectTag').hide();
+                    }
                 });
-                this.listenTo(this.schemaCollection, "reset", function(value) {
-                    this.renderTableLayoutView();
-                    $('.schemaTable').show();
-                    this.$('.fontLoader').hide();
-                }, this);
-                this.listenTo(this.schemaCollection, "error", function(value) {
-                    $('.schemaTable').hide();
-                    this.$('.fontLoader').hide();
-                }, this);
             },
             onRender: function() {
-                var that = this;
-                this.schemaCollection.fetch({ reset: true });
-                this.renderTableLayoutView();
+                this.generateTableData();
+            },
+            generateTableData: function(checkedDelete) {
+                var that = this,
+                    newModel;
+                this.activeObj = [];
+                this.deleteObj = [];
+                this.schemaTableAttribute = null;
+                if (this.attribute && this.attribute[0]) {
+                    var firstColumn = this.attribute[0],
+                        defObj = that.entityDefCollection.fullCollection.find({ name: firstColumn.typeName });
+                    if (defObj && defObj.get('options') && defObj.get('options').schemaAttributes) {
+                        if (firstColumn) {
+                            try {
+                                var mapObj = JSON.parse(defObj.get('options').schemaAttributes);
+                                that.schemaTableAttribute = _.pick(firstColumn.attributes, mapObj);
+                            } catch (e) {}
+                        }
+                    }
+                }
+                _.each(this.attribute, function(obj) {
+                    newModel = that.referredEntities[obj.guid];
+                    if (newModel.attributes['position']) {
+                        newModel['position'] = newModel.attributes['position'];
+                    }
+                    if (!Enums.entityStateReadOnly[newModel.status]) {
+                        that.activeObj.push(newModel);
+                        that.schemaCollection.push(newModel);
+                    } else if (Enums.entityStateReadOnly[newModel.status]) {
+                        that.deleteObj.push(newModel);
+                    }
+                });
                 $('body').click(function(e) {
                     var iconEvnt = e.target.nodeName;
                     if (that.$('.popoverContainer').length) {
@@ -150,27 +186,54 @@ define(['require',
                         that.$('.popover.popoverTag').hide();
                     }
                 });
+                if (this.schemaCollection.length === 0 && this.deleteObj.length) {
+                    this.ui.checkDeletedEntity.find("input").prop('checked', true);
+                    this.schemaCollection.reset(this.deleteObj, { silent: true });
+                }
+                if (this.activeObj.length === 0 && this.deleteObj.length === 0) {
+                    this.ui.checkDeletedEntity.hide();
+                }
+                this.renderTableLayoutView();
             },
-            fetchCollection: function() {
+            showLoader: function() {
                 this.$('.fontLoader').show();
-                this.schemaCollection.fetch({ reset: true });
+                this.$('.tableOverlay').show()
+            },
+            hideLoader: function(argument) {
+                this.$('.fontLoader').hide();
+                this.$('.tableOverlay').hide();
             },
             renderTableLayoutView: function() {
-                var that = this,
-                    count = 5;
+                var that = this;
                 require(['utils/TableLayout'], function(TableLayout) {
                     var columnCollection = Backgrid.Columns.extend({
-                        sortKey: "position",
-                        comparator: function(item) {
-                            return item.get(this.sortKey) || 999;
-                        }
+                        // sortKey: "position",
+                        // comparator: function(item) {
+                        //     return item.get(this.sortKey) || 999;
+                        // },
+                        // setPositions: function() {
+                        //     _.each(this.models, function(model, index) {
+                        //         if (model.get('name') == "name") {
+                        //             model.set("position", 2, { silent: true });
+                        //             model.set("label", "Name");
+                        //         } else if (model.get('name') == "description") {
+                        //             model.set("position", 3, { silent: true });
+                        //             model.set("label", "Description");
+                        //         } else if (model.get('name') == "owner") {
+                        //             model.set("position", 4, { silent: true });
+                        //             model.set("label", "Owner");
+                        //         }
+                        //     });
+                        //     return this;
+                        // }
                     });
                     var columns = new columnCollection(that.getSchemaTableColumns());
-                    that.RTagLayoutView.show(new TableLayout(_.extend({}, that.commonTableOptions, {
-                        globalVent: that.globalVent,
+                    //columns.setPositions().sort();
+                    that.RSchemaTableLayoutView.show(new TableLayout(_.extend({}, that.commonTableOptions, {
                         columns: columns
                     })));
-                    that.$('.multiSelect').hide();
+                    that.$('.multiSelectTerm').hide();
+                    that.$('.multiSelectTag').hide();
                     that.renderBreadcrumb();
                 });
             },
@@ -184,57 +247,43 @@ define(['require',
                 });
             },
             getSchemaTableColumns: function() {
-                var that = this;
-                var col = {};
-                if (this.schemaCollection.keyList) {
-                    _.each(this.schemaCollection.keyList, function(obj, key) {
-                        col[obj.name] = {
-                            cell: "Html",
-                            editable: false,
-                            sortable: false,
-                            orderable: true,
-                            formatter: _.extend({}, Backgrid.CellFormatter.prototype, {
-                                fromRaw: function(rawValue, model) {
-                                    if (model) {
-                                        if (!_.isArray(rawValue) && _.isObject(rawValue)) {
-                                            if (rawValue.id) {
-                                                return '<div><a href="#!/detailPage/' + rawValue.id + '">' + rawValue.$typeName$ + '</a></div>';
-                                            } else {
-                                                return rawValue.$typeName$;
-                                            }
-                                        } else if (_.isArray(rawValue)) {
-                                            var links = "";
-                                            _.each(rawValue, function(val, key) {
-                                                if (val.id) {
-                                                    links += '<div><a href="#!/detailPage/' + val.id + '">' + val.$typeName$ + '</a></div>';
-                                                } else {
-                                                    links += '<div>' + val.$typeName$ + '</div>';
-                                                }
-                                            });
-                                            return links;
-
-                                        } else if (model.get('$id$') && model.get('$id$').id && model.get('name') == rawValue) {
-                                            return '<div><a href="#!/detailPage/' + model.get('$id$').id + '">' + rawValue + '</a></div>';
-                                        } else {
-                                            return rawValue;
-                                        }
-                                    } else {
-                                        return rawValue;
-                                    }
-
-                                }
-                            })
-                        };
-                    });
-                    if (Globals.taxonomy) {
-                        col['Check'] = {
+                var that = this,
+                    col = {
+                        Check: {
                             name: "selected",
                             label: "",
                             cell: "select-row",
-                            headerCell: "select-all",
-                            position: 1
-                        };
+                            headerCell: "select-all"
+                        }
                     }
+                if (this.schemaTableAttribute) {
+                    _.each(_.keys(this.schemaTableAttribute), function(key) {
+                        if (key !== "position") {
+                            col[key] = {
+                                label: key,
+                                cell: "html",
+                                editable: false,
+                                sortable: false,
+                                className: "searchTableName",
+                                formatter: _.extend({}, Backgrid.CellFormatter.prototype, {
+                                    fromRaw: function(rawValue, model) {
+                                        var value = model.get('attributes')[key];
+                                        if (key === "name" && model.get('guid')) {
+                                            var nameHtml = '<a href="#!/detailPage/' + model.get('guid') + '">' + value + '</a>';
+                                            if (model.get('status') && Enums.entityStateReadOnly[model.get('status')]) {
+                                                nameHtml += '<button type="button" title="Deleted" class="btn btn-atlasAction btn-atlas deleteBtn"><i class="fa fa-trash"></i></button>';
+                                                return '<div class="readOnly readOnlyLink">' + nameHtml + '</div>';
+                                            } else {
+                                                return nameHtml;
+                                            }
+                                        } else {
+                                            return value
+                                        }
+                                    }
+                                })
+                            };
+                        }
+                    });
                     col['tag'] = {
                         label: "Tags",
                         cell: "Html",
@@ -243,7 +292,12 @@ define(['require',
                         className: 'searchTag',
                         formatter: _.extend({}, Backgrid.CellFormatter.prototype, {
                             fromRaw: function(rawValue, model) {
-                                return CommonViewFunction.tagForTable(model);
+                                var obj = model.toJSON();
+                                if (obj.status && Enums.entityStateReadOnly[obj.status]) {
+                                    return '<div class="readOnly">' + CommonViewFunction.tagForTable(obj); + '</div>';
+                                } else {
+                                    return CommonViewFunction.tagForTable(obj);
+                                }
                             }
                         })
                     };
@@ -257,17 +311,24 @@ define(['require',
                             className: 'searchTerm',
                             formatter: _.extend({}, Backgrid.CellFormatter.prototype, {
                                 fromRaw: function(rawValue, model) {
-                                    var returnObject = CommonViewFunction.termTableBreadcrumbMaker(model, "schema");
+                                    var obj = model.toJSON();
+                                    var returnObject = CommonViewFunction.termTableBreadcrumbMaker(obj);
                                     if (returnObject.object) {
                                         that.bradCrumbList.push(returnObject.object);
                                     }
-                                    return returnObject.html;
+                                    if (obj.status && Enums.entityStateReadOnly[obj.status]) {
+                                        return '<div class="readOnly">' + returnObject.html + '</div>';
+                                    } else {
+                                        return returnObject.html;
+                                    }
+
                                 }
                             })
                         };
                     }
+                    return this.schemaCollection.constructor.getTableCols(col, this.schemaCollection);
                 }
-                return this.schemaCollection.constructor.getTableCols(col, this.schemaCollection);
+
             },
             checkedValue: function(e) {
                 if (e) {
@@ -275,24 +336,40 @@ define(['require',
                 }
                 var guid = "",
                     that = this;
-                if (this.arr && this.arr.length) {
-                    that.addTermModalView(guid, this.arr);
+                var multiSelectTag = $(e.currentTarget).hasClass('assignTag');
+                if (multiSelectTag) {
+                    if (this.arr && this.arr.length && multiSelectTag) {
+                        that.addTagModalView(guid, this.arr);
+                    } else {
+                        guid = that.$(e.currentTarget).data("guid");
+                        that.addTagModalView(guid);
+                    }
                 } else {
-                    guid = that.$(e.currentTarget).data("guid");
-                    that.addTermModalView(guid);
+                    if (this.arr && this.arr.length) {
+                        that.addTermModalView(guid, this.arr);
+                    } else {
+                        guid = that.$(e.currentTarget).data("guid");
+                        that.addTermModalView(guid);
+                    }
                 }
             },
-            addTagModalView: function(e) {
-                if (e) {
-                    e.stopPropagation();
-                }
+            addTagModalView: function(guid, multiple) {
                 var that = this;
+                var tagList = that.schemaCollection.find({ 'guid': guid });
                 require(['views/tag/addTagModalView'], function(AddTagModalView) {
                     var view = new AddTagModalView({
-                        guid: that.$(e.currentTarget).data("guid"),
+                        guid: guid,
+                        multiple: multiple,
+                        tagList: _.map((tagList ? tagList.get('classifications') : []), function(obj) {
+                            return obj.typeName;
+                        }),
                         callback: function() {
                             that.fetchCollection();
-                        }
+                            that.arr = [];
+                        },
+                        hideLoader: that.hideLoader.bind(that),
+                        showLoader: that.showLoader.bind(that),
+                        enumDefCollection: that.enumDefCollection
                     });
                     // view.saveTagData = function() {
                     //override saveTagData function 
@@ -312,10 +389,8 @@ define(['require',
                             that.fetchCollection();
                             that.arr = [];
                         },
-                        showLoader: function() {
-                            that.$('.fontLoader').show();
-                            that.$('.searchTable').hide();
-                        }
+                        hideLoader: that.hideLoader.bind(that),
+                        showLoader: that.showLoader.bind(that)
                     });
                 });
             },
@@ -327,13 +402,13 @@ define(['require',
                     that = this;
                 if (tagOrTerm === "term") {
                     var modal = CommonViewFunction.deleteTagModel({
-                        msg: "<div class='ellipsis'>Remove: " + "<b>" + tagName + "</b> assignment from" + " " + "<b>" + assetName + " ?</b></div>",
+                        msg: "<div class='ellipsis'>Remove: " + "<b>" + _.escape(tagName) + "</b> assignment from" + " " + "<b>" + assetName + " ?</b></div>",
                         titleMessage: Messages.removeTerm,
                         buttonText: "Remove"
                     });
                 } else if (tagOrTerm === "tag") {
                     var modal = CommonViewFunction.deleteTagModel({
-                        msg: "<div class='ellipsis'>Remove: " + "<b>" + tagName + "</b> assignment from" + " " + "<b>" + assetName + " ?</b></div>",
+                        msg: "<div class='ellipsis'>Remove: " + "<b>" + _.escape(tagName) + "</b> assignment from" + " " + "<b>" + assetName + " ?</b></div>",
                         titleMessage: Messages.removeTag,
                         buttonText: "Remove"
                     });
@@ -355,10 +430,21 @@ define(['require',
                     'tagName': tagName,
                     'guid': guid,
                     'tagOrTerm': tagOrTerm,
+                    showLoader: that.showLoader.bind(that),
+                    hideLoader: that.hideLoader.bind(that),
                     callback: function() {
                         that.fetchCollection();
                     }
                 });
+            },
+            onCheckDeletedEntity: function(e) {
+                if (e.target.checked) {
+                    if (this.deleteObj.length) {
+                        this.schemaCollection.reset(this.activeObj.concat(this.deleteObj));
+                    }
+                } else {
+                    this.schemaCollection.reset(this.activeObj);
+                }
             }
         });
     return SchemaTableLayoutView;

@@ -52,7 +52,9 @@ public class HiveMetastoreBridgeIT extends HiveITBase {
         assertEquals(outputs.size(), 1);
         assertEquals(outputs.get(0).getId()._getId(), tableId);
 
-        //Now import using import tool - should be no-op
+        int tableCount = atlasClient.listEntities(HiveDataTypes.HIVE_TABLE.getName()).size();
+
+        //Now import using import tool - should be no-op. This also tests update since table exists
         hiveMetaStoreBridge.importTable(atlasClient.getEntity(dbId), DEFAULT_DB, tableName, true);
         String tableId2 = assertTableIsRegistered(DEFAULT_DB, tableName);
         assertEquals(tableId2, tableId);
@@ -61,6 +63,10 @@ public class HiveMetastoreBridgeIT extends HiveITBase {
                 AtlasClient.REFERENCEABLE_ATTRIBUTE_NAME,
                 getTableProcessQualifiedName(DEFAULT_DB, tableName), null);
         assertEquals(processId2, processId);
+
+        //assert that table is de-duped and no new entity is created
+        int newTableCount = atlasClient.listEntities(HiveDataTypes.HIVE_TABLE.getName()).size();
+        assertEquals(newTableCount, tableCount);
     }
 
     @Test

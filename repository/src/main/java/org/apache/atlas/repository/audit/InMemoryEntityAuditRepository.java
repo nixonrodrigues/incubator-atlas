@@ -20,9 +20,10 @@ package org.apache.atlas.repository.audit;
 
 import org.apache.atlas.AtlasException;
 import org.apache.atlas.EntityAuditEvent;
+import org.apache.atlas.annotation.ConditionalOnAtlasProperty;
+import org.springframework.stereotype.Component;
 
-import com.google.inject.Singleton;
-
+import javax.inject.Singleton;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -33,6 +34,8 @@ import java.util.TreeMap;
  * Entity audit repository where audit events are stored in-memory. Used only for integration tests
  */
 @Singleton
+@Component
+@ConditionalOnAtlasProperty(property = "atlas.EntityAuditRepository.impl")
 public class InMemoryEntityAuditRepository implements EntityAuditRepository {
     private TreeMap<String, EntityAuditEvent> auditEvents = new TreeMap<>();
 
@@ -50,8 +53,10 @@ public class InMemoryEntityAuditRepository implements EntityAuditRepository {
         }
     }
 
+    //synchronized to avoid concurrent modification exception that occurs if events are added
+    //while we are iterating through the map
     @Override
-    public List<EntityAuditEvent> listEvents(String entityId, String startKey, short maxResults)
+    public synchronized List<EntityAuditEvent> listEvents(String entityId, String startKey, short maxResults)
             throws AtlasException {
         List<EntityAuditEvent> events = new ArrayList<>();
         String myStartKey = startKey;
@@ -65,5 +70,15 @@ public class InMemoryEntityAuditRepository implements EntityAuditRepository {
             }
         }
         return events;
+    }
+
+    @Override
+    public long repositoryMaxSize() throws AtlasException {
+        return -1;
+    }
+
+    @Override
+    public List<String> getAuditExcludeAttributes(String entityType) throws AtlasException {
+        return null;
     }
 }

@@ -18,25 +18,47 @@
 
 package org.apache.atlas.web.resources;
 
-import org.apache.atlas.AtlasException;
-import org.apache.atlas.catalog.*;
+import org.apache.atlas.catalog.BaseRequest;
+import org.apache.atlas.catalog.CollectionRequest;
+import org.apache.atlas.catalog.DefaultTypeSystem;
+import org.apache.atlas.catalog.EntityResourceProvider;
+import org.apache.atlas.catalog.EntityTagResourceProvider;
+import org.apache.atlas.catalog.InstanceRequest;
+import org.apache.atlas.catalog.Result;
 import org.apache.atlas.catalog.exception.CatalogException;
+import org.apache.atlas.exception.AtlasBaseException;
 import org.apache.atlas.services.MetadataService;
+import org.apache.atlas.store.AtlasTypeDefStore;
 import org.apache.atlas.utils.AtlasPerfTracer;
 import org.apache.atlas.web.util.Servlets;
 import org.slf4j.Logger;
+import org.springframework.stereotype.Service;
 
 import javax.inject.Inject;
 import javax.inject.Singleton;
-import javax.ws.rs.*;
-import javax.ws.rs.core.*;
-import java.util.*;
+import javax.ws.rs.DELETE;
+import javax.ws.rs.GET;
+import javax.ws.rs.POST;
+import javax.ws.rs.Path;
+import javax.ws.rs.PathParam;
+import javax.ws.rs.Produces;
+import javax.ws.rs.core.Context;
+import javax.ws.rs.core.GenericEntity;
+import javax.ws.rs.core.HttpHeaders;
+import javax.ws.rs.core.Response;
+import javax.ws.rs.core.UriInfo;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Service which handles API requests for v1 entity resources.
  */
 @Path("v1/entities")
 @Singleton
+@Service
 public class EntityService extends BaseService {
     private static final Logger PERF_LOG = AtlasPerfTracer.getPerfLogger("rest.EntityService");
 
@@ -44,8 +66,8 @@ public class EntityService extends BaseService {
     private final EntityTagResourceProvider entityTagResourceProvider;
 
     @Inject
-    public EntityService(MetadataService metadataService) throws AtlasException {
-        DefaultTypeSystem typeSystem = new DefaultTypeSystem(metadataService);
+    public EntityService(MetadataService metadataService, AtlasTypeDefStore typeDefStore) throws AtlasBaseException {
+        DefaultTypeSystem typeSystem = new DefaultTypeSystem(metadataService, typeDefStore);
         entityResourceProvider = new EntityResourceProvider(typeSystem);
         entityTagResourceProvider = new EntityTagResourceProvider(typeSystem);
     }

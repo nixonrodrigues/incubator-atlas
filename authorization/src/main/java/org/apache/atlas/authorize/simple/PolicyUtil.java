@@ -33,18 +33,20 @@ public class PolicyUtil {
     private static boolean isDebugEnabled = LOG.isDebugEnabled();
 
 
-    public Map<String, Map<AtlasResourceTypes, List<String>>> createPermissionMap(List<PolicyDef> policyDefList,
+    public static Map<String, Map<AtlasResourceTypes, List<String>>> createPermissionMap(List<PolicyDef> policyDefList,
         AtlasActionTypes permissionType, SimpleAtlasAuthorizer.AtlasAccessorTypes principalType) {
         if (isDebugEnabled) {
-            LOG.debug("==> PolicyUtil createPermissionMap" + "\nCreating Permission Map for :: " + permissionType
-                + " & " + principalType);
+            LOG.debug("==> PolicyUtil createPermissionMap\nCreating Permission Map for :: {} & {}", permissionType, principalType);
         }
         Map<String, Map<AtlasResourceTypes, List<String>>> userReadMap =
-            new HashMap<String, Map<AtlasResourceTypes, List<String>>>();
+                new HashMap<>();
 
         // Iterate over the list of policies to create map
         for (PolicyDef policyDef : policyDefList) {
-            LOG.info("Processing policy def : " + policyDef);
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("Processing policy def : {}", policyDef);
+            }
+
             Map<String, List<AtlasActionTypes>> principalMap =
                 principalType.equals(SimpleAtlasAuthorizer.AtlasAccessorTypes.USER) ? policyDef.getUsers() : policyDef
                     .getGroups();
@@ -61,9 +63,9 @@ public class PolicyUtil {
                 // If its not added then create a new resource list
                 if (userResourceList == null) {
                     if (isDebugEnabled) {
-                        LOG.debug("Resource list not found for " + username + ", creating it");
+                        LOG.debug("Resource list not found for {}, creating it", username);
                     }
-                    userResourceList = new HashMap<AtlasResourceTypes, List<String>>();
+                    userResourceList = new HashMap<>();
                 }
                 /*
                  * Iterate over resources from the current policy def and update the resource list for the current user
@@ -77,7 +79,7 @@ public class PolicyUtil {
                     if (resourceList == null) {
                         // if the resource list was not added for this type then
                         // create and add all the resources in this policy
-                        resourceList = new ArrayList<String>();
+                        resourceList = new ArrayList<>();
                         resourceList.addAll(resourceTypeMap.getValue());
                     } else {
                         // if the resource list is present then merge both the
@@ -89,15 +91,17 @@ public class PolicyUtil {
                     userResourceList.put(type, resourceList);
                 }
                 userReadMap.put(username, userResourceList);
-                LOG.info("userReadMap " + userReadMap);
+
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("userReadMap {}", userReadMap);
+                }
             }
         }
         if (isDebugEnabled) {
-            LOG.debug("Returning Map for " + principalType + " :: " + userReadMap);
+            LOG.debug("Returning Map for {} :: {}", principalType, userReadMap);
             LOG.debug("<== PolicyUtil createPermissionMap");
         }
         return userReadMap;
 
     }
-
 }

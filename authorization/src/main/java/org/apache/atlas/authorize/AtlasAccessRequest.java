@@ -17,14 +17,13 @@
  */
 package org.apache.atlas.authorize;
 
-import java.util.Date;
-import java.util.Set;
-
-import javax.servlet.http.HttpServletRequest;
-
 import org.apache.atlas.authorize.simple.AtlasAuthorizationUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import javax.servlet.http.HttpServletRequest;
+import java.util.Date;
+import java.util.Set;
 
 public class AtlasAccessRequest {
 
@@ -39,12 +38,13 @@ public class AtlasAccessRequest {
     private String clientIPAddress = null;
 
     public AtlasAccessRequest(HttpServletRequest request, String user, Set<String> userGroups) {
-        this(AtlasAuthorizationUtils.getAtlasResourceType(request.getServletPath()), "*", AtlasAuthorizationUtils
-            .getAtlasAction(request.getMethod()), user, userGroups);
+        // Spring Security 4 Change => request.getServletPath() -> request.getPathInfo()
+        this(AtlasAuthorizationUtils.getAtlasResourceType(request.getPathInfo()), "*", AtlasAuthorizationUtils
+            .getAtlasAction(request.getMethod()), user, userGroups,AtlasAuthorizationUtils.getRequestIpAddress(request));
     }
 
     public AtlasAccessRequest(Set<AtlasResourceTypes> resourceType, String resource, AtlasActionTypes action,
-        String user, Set<String> userGroups) {
+        String user, Set<String> userGroups, String clientIPAddress) {
         if (isDebugEnabled) {
             LOG.debug("==> AtlasAccessRequestImpl-- Initializing AtlasAccessRequest");
         }
@@ -56,7 +56,7 @@ public class AtlasAccessRequest {
 
         // set remaining fields to default value
         setAccessTime(null);
-        setClientIPAddress(null);
+        setClientIPAddress(clientIPAddress);
     }
 
     public Set<AtlasResourceTypes> getResourceTypes() {

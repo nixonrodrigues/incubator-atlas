@@ -18,16 +18,17 @@
 
 package org.apache.atlas.repository.graph;
 
-import com.tinkerpop.blueprints.Vertex;
 import org.apache.atlas.AtlasClient;
 import org.apache.atlas.AtlasException;
 import org.apache.atlas.TestUtils;
 import org.apache.atlas.repository.Constants;
+import org.apache.atlas.repository.graphdb.AtlasVertex;
 import org.apache.atlas.typesystem.IReferenceableInstance;
 import org.apache.atlas.typesystem.IStruct;
 import org.apache.atlas.typesystem.ITypedReferenceableInstance;
 import org.apache.atlas.typesystem.ITypedStruct;
 import org.apache.atlas.typesystem.persistence.Id;
+import org.apache.atlas.typesystem.persistence.Id.EntityState;
 import org.apache.atlas.typesystem.types.TypeSystem;
 import org.testng.Assert;
 
@@ -114,9 +115,9 @@ public class GraphBackedRepositorySoftDeleteTest extends GraphBackedMetadataRepo
     }
 
     @Override
-    protected void assertVerticesDeleted(List<Vertex> vertices) {
-        for (Vertex vertex : vertices) {
-            assertEquals(vertex.getProperty(Constants.STATE_PROPERTY_KEY), Id.EntityState.DELETED.name());
+    protected void assertVerticesDeleted(List<AtlasVertex> vertices) {
+        for (AtlasVertex vertex : vertices) {
+            assertEquals(GraphHelper.getSingleValuedProperty(vertex, Constants.STATE_PROPERTY_KEY, String.class), Id.EntityState.DELETED.name());
         }
     }
 
@@ -213,5 +214,26 @@ public class GraphBackedRepositorySoftDeleteTest extends GraphBackedMetadataRepo
     @Override
     protected void assertTestDeleteTargetOfMultiplicityRequiredReference() throws Exception {
         // No-op - it's ok that no exception was thrown if soft deletes are enabled.
+    }
+
+    @Override
+    protected void assertTestLowerBoundsIgnoredOnDeletedEntities(List<ITypedReferenceableInstance> employees) {
+
+        Assert.assertEquals(employees.size(), 4, "References to deleted employees should not have been disconnected with soft deletes enabled");
+    }
+
+    @Override
+    protected void assertTestLowerBoundsIgnoredOnCompositeDeletedEntities(String hrDeptGuid) throws Exception {
+
+        ITypedReferenceableInstance hrDept = repositoryService.getEntityDefinition(hrDeptGuid);
+        Assert.assertEquals(hrDept.getId().getState(), EntityState.DELETED);
+    }
+
+    @Override
+    protected void verifyTestDeleteEntityWithDuplicateReferenceListElements(List columnsPropertyValue) {
+
+        // With soft deletes enabled, verify that edge IDs for deleted edges
+        // were not removed from the array property list.
+        Assert.assertEquals(columnsPropertyValue.size(), 4);
     }
 }

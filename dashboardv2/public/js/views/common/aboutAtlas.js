@@ -19,8 +19,9 @@
 define(['require',
     'backbone',
     'hbs!tmpl/common/aboutAtlas_tmpl',
-    'models/VCommon'
-], function(require, Backbone, aboutAtlasTmpl, VCommon) {
+    'models/VCommon',
+    'utils/UrlLinks'
+], function(require, Backbone, aboutAtlasTmpl, VCommon, UrlLinks) {
     'use strict';
 
     var aboutAtlasView = Backbone.Marionette.LayoutView.extend(
@@ -40,7 +41,7 @@ define(['require',
              * @constructs
              */
             initialize: function(options) {
-                _.extend(this, _.pick(options, 'globalVent'));
+                _.extend(this, options);
             },
             bindEvents: function() {
 
@@ -48,14 +49,13 @@ define(['require',
             },
             onRender: function() {
                 var that = this;
-                var url = "/api/atlas/admin/version";
+                var url = UrlLinks.versionApiUrl();
                 var VCommonModel = new VCommon();
                 VCommonModel.aboutUs(url, {
                     success: function(data) {
                         var str = "<b>Version : </b>" + data.Version;
                         that.ui.atlasVersion.html(str);
                     },
-                    error: function(error, data, status) {},
                     complete: function() {}
                 });
             },

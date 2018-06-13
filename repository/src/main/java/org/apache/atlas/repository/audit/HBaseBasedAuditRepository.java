@@ -19,10 +19,10 @@
 package org.apache.atlas.repository.audit;
 
 import com.google.common.annotations.VisibleForTesting;
-import com.google.inject.Singleton;
 import org.apache.atlas.ApplicationProperties;
 import org.apache.atlas.AtlasException;
 import org.apache.atlas.EntityAuditEvent;
+import org.apache.atlas.annotation.ConditionalOnAtlasProperty;
 import org.apache.atlas.ha.HAConfiguration;
 import org.apache.atlas.listener.ActiveStateChangeHandler;
 import org.apache.atlas.service.Service;
@@ -41,16 +41,23 @@ import org.apache.hadoop.hbase.client.ResultScanner;
 import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.client.Table;
 import org.apache.hadoop.hbase.filter.PageFilter;
+import org.apache.hadoop.hbase.io.compress.Compression;
+import org.apache.hadoop.hbase.io.encoding.DataBlockEncoding;
+import org.apache.hadoop.hbase.regionserver.BloomType;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
 
+import javax.inject.Singleton;
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 
 /**
  * HBase based repository for entity audit events
@@ -65,21 +72,39 @@ import java.util.List;
  * But if there are more than one atlas servers, we should use server id in the key
  */
 @Singleton
+@Component
+@ConditionalOnAtlasProperty(property = "atlas.EntityAuditRepository.impl", isDefault = true)
 public class HBaseBasedAuditRepository implements Service, EntityAuditRepository, ActiveStateChangeHandler {
     private static final Logger LOG = LoggerFactory.getLogger(HBaseBasedAuditRepository.class);
 
     public static final String CONFIG_PREFIX = "atlas.audit";
     public static final String CONFIG_TABLE_NAME = CONFIG_PREFIX + ".hbase.tablename";
     public static final String DEFAULT_TABLE_NAME = "ATLAS_ENTITY_AUDIT_EVENTS";
-
-    private static final String FIELD_SEPARATOR = ":";
+    public static final String CONFIG_PERSIST_ENTITY_DEFINITION = CONFIG_PREFIX + ".persistEntityDefinition";
 
     public static final byte[] COLUMN_FAMILY = Bytes.toBytes("dt");
-    public static final byte[] COLUMN_ACTION = Bytes.toBytes("action");
-    public static final byte[] COLUMN_DETAIL = Bytes.toBytes("detail");
-    public static final byte[] COLUMN_USER = Bytes.toBytes("user");
-    public static final byte[] COLUMN_DEFINITION = Bytes.toBytes("def");
+    public static final byte[] COLUMN_ACTION = Bytes.toBytes("a");
+    public static final byte[] COLUMN_DETAIL = Bytes.toBytes("d");
+    public static final byte[] COLUMN_USER = Bytes.toBytes("u");
+    public static final byte[] COLUMN_DEFINITION = Bytes.toBytes("f");
 
+    private static final String  AUDIT_REPOSITORY_MAX_SIZE_PROPERTY = "atlas.hbase.client.keyvalue.maxsize";
+    private static final String  AUDIT_EXCLUDE_ATTRIBUTE_PROPERTY   = "atlas.audit.hbase.entity";
+    private static final String  FIELD_SEPARATOR = ":";
+    private static final long    ATLAS_HBASE_KEYVALUE_DEFAULT_SIZE = 1024 * 1024;
+    private static Configuration APPLICATION_PROPERTIES = null;
+
+    private static boolean       persistEntityDefinition;
+
+    private Map<String, List<String>> auditExcludedAttributesCache = new HashMap<>();
+
+    static {
+        try {
+            persistEntityDefinition = ApplicationProperties.get().getBoolean(CONFIG_PERSIST_ENTITY_DEFINITION, false);
+        } catch (AtlasException e) {
+            throw new RuntimeException(e);
+        }
+    }
     private TableName tableName;
     private Connection connection;
 
@@ -100,7 +125,10 @@ public class HBaseBasedAuditRepository implements Service, EntityAuditRepository
      * @throws AtlasException
      */
     public void putEvents(List<EntityAuditEvent> events) throws AtlasException {
-        LOG.info("Putting {} events", events.size());
+        if (LOG.isDebugEnabled()) {
+            LOG.debug("Putting {} events", events.size());
+        }
+
         Table table = null;
         try {
             table = connection.getTable(tableName);
@@ -111,7 +139,9 @@ public class HBaseBasedAuditRepository implements Service, EntityAuditRepository
                 addColumn(put, COLUMN_ACTION, event.getAction());
                 addColumn(put, COLUMN_USER, event.getUser());
                 addColumn(put, COLUMN_DETAIL, event.getDetails());
-                addColumn(put, COLUMN_DEFINITION, event.getEntityDefinitionString());
+                if (persistEntityDefinition) {
+                    addColumn(put, COLUMN_DEFINITION, event.getEntityDefinitionString());
+                }
                 puts.add(put);
             }
             table.put(puts);
@@ -145,7 +175,10 @@ public class HBaseBasedAuditRepository implements Service, EntityAuditRepository
      */
     public List<EntityAuditEvent> listEvents(String entityId, String startKey, short n)
             throws AtlasException {
-        LOG.info("Listing events for entity id {}, starting timestamp {}, #records {}", entityId, startKey, n);
+        if (LOG.isDebugEnabled()) {
+            LOG.debug("Listing events for entity id {}, starting timestamp {}, #records {}", entityId, startKey, n);
+        }
+
         Table table = null;
         ResultScanner scanner = null;
         try {
@@ -185,10 +218,19 @@ public class HBaseBasedAuditRepository implements Service, EntityAuditRepository
                 event.setUser(getResultString(result, COLUMN_USER));
                 event.setAction(EntityAuditEvent.EntityAuditAction.valueOf(getResultString(result, COLUMN_ACTION)));
                 event.setDetails(getResultString(result, COLUMN_DETAIL));
-                event.setEntityDefinition(getResultString(result, COLUMN_DEFINITION));
+                if (persistEntityDefinition) {
+                    String colDef = getResultString(result, COLUMN_DEFINITION);
+                    if (colDef != null) {
+                        event.setEntityDefinition(colDef);
+                    }
+                }
                 events.add(event);
             }
-            LOG.info("Got events for entity id {}, starting timestamp {}, #records {}", entityId, startKey, events.size());
+
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("Got events for entity id {}, starting timestamp {}, #records {}", entityId, startKey, events.size());
+            }
+
             return events;
         } catch (IOException e) {
             throw new AtlasException(e);
@@ -198,8 +240,58 @@ public class HBaseBasedAuditRepository implements Service, EntityAuditRepository
         }
     }
 
+    @Override
+    public long repositoryMaxSize() throws AtlasException {
+        long ret;
+        initApplicationProperties();
+
+        if (APPLICATION_PROPERTIES == null) {
+            ret = ATLAS_HBASE_KEYVALUE_DEFAULT_SIZE;
+        } else {
+            ret = APPLICATION_PROPERTIES.getLong(AUDIT_REPOSITORY_MAX_SIZE_PROPERTY, ATLAS_HBASE_KEYVALUE_DEFAULT_SIZE);
+        }
+
+        return ret;
+    }
+
+    @Override
+    public List<String> getAuditExcludeAttributes(String entityType) throws AtlasException {
+        List<String> ret = null;
+
+        initApplicationProperties();
+
+        if (auditExcludedAttributesCache.containsKey(entityType)) {
+            ret = auditExcludedAttributesCache.get(entityType);
+        } else if (APPLICATION_PROPERTIES != null) {
+            String[] excludeAttributes = APPLICATION_PROPERTIES.getStringArray(AUDIT_EXCLUDE_ATTRIBUTE_PROPERTY + "." +
+                    entityType + "." +  "attributes.exclude");
+
+            if (excludeAttributes != null) {
+                ret = Arrays.asList(excludeAttributes);
+            }
+
+            auditExcludedAttributesCache.put(entityType, ret);
+        }
+
+        return ret;
+    }
+
+    private void initApplicationProperties() {
+        if (APPLICATION_PROPERTIES == null) {
+            try {
+                APPLICATION_PROPERTIES = ApplicationProperties.get();
+            } catch (AtlasException ex) {
+                // ignore
+            }
+        }
+    }
+
     private String getResultString(Result result, byte[] columnName) {
-        return Bytes.toString(result.getValue(COLUMN_FAMILY, columnName));
+        byte[] rawValue = result.getValue(COLUMN_FAMILY, columnName);
+        if ( rawValue != null) {
+            return Bytes.toString(rawValue);
+        }
+        return null;
     }
 
     private EntityAuditEvent fromKey(byte[] keyBytes) {
@@ -252,6 +344,9 @@ public class HBaseBasedAuditRepository implements Service, EntityAuditRepository
                 HTableDescriptor tableDescriptor = new HTableDescriptor(tableName);
                 HColumnDescriptor columnFamily = new HColumnDescriptor(COLUMN_FAMILY);
                 columnFamily.setMaxVersions(1);
+                columnFamily.setDataBlockEncoding(DataBlockEncoding.FAST_DIFF);
+                columnFamily.setCompressionType(Compression.Algorithm.GZ);
+                columnFamily.setBloomFilterType(BloomType.ROW);
                 tableDescriptor.addFamily(columnFamily);
                 admin.createTable(tableDescriptor);
             } else {

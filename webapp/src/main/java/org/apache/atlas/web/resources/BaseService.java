@@ -20,9 +20,16 @@ package org.apache.atlas.web.resources;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonSyntaxException;
-import org.apache.atlas.catalog.*;
-import org.apache.atlas.catalog.exception.*;
-import org.apache.atlas.repository.graph.TitanGraphProvider;
+import org.apache.atlas.catalog.JsonSerializer;
+import org.apache.atlas.catalog.Request;
+import org.apache.atlas.catalog.ResourceProvider;
+import org.apache.atlas.catalog.Result;
+import org.apache.atlas.catalog.exception.CatalogException;
+import org.apache.atlas.catalog.exception.CatalogRuntimeException;
+import org.apache.atlas.catalog.exception.InvalidPayloadException;
+import org.apache.atlas.catalog.exception.InvalidQueryException;
+import org.apache.atlas.catalog.exception.ResourceNotFoundException;
+import org.apache.atlas.repository.graph.AtlasGraphProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -45,7 +52,6 @@ public abstract class BaseService {
     protected Result getResource(ResourceProvider provider, Request request)
             throws ResourceNotFoundException {
 
-        initializeGraphTransaction();
         try {
             return provider.getResourceById(request);
         } catch (RuntimeException e) {
@@ -56,16 +62,15 @@ public abstract class BaseService {
     protected Result getResources(ResourceProvider provider, Request request)
             throws ResourceNotFoundException, InvalidQueryException {
 
-        initializeGraphTransaction();
         try {
             return provider.getResources(request);
         } catch (RuntimeException e) {
+            LOG.error("Error while retrieving taxonomy ", e);
             throw wrapRuntimeException(e);
         }
     }
 
     protected void createResource(ResourceProvider provider, Request request) throws CatalogException {
-        initializeGraphTransaction();
         try {
             provider.createResource(request);
         } catch (RuntimeException e) {
@@ -74,7 +79,6 @@ public abstract class BaseService {
     }
 
     protected void updateResource(ResourceProvider provider, Request request) throws CatalogException {
-        initializeGraphTransaction();
         try {
             provider.updateResourceById(request);
         } catch (RuntimeException e) {
@@ -83,7 +87,6 @@ public abstract class BaseService {
     }
 
     protected void deleteResource(ResourceProvider provider, Request request) throws CatalogException {
-        initializeGraphTransaction();
         try {
             provider.deleteResourceById(request);
 
@@ -93,7 +96,6 @@ public abstract class BaseService {
     }
 
     protected Collection<String> createResources(ResourceProvider provider, Request request) throws CatalogException {
-        initializeGraphTransaction();
         try {
             return provider.createResources(request);
         } catch (RuntimeException e) {
@@ -132,11 +134,6 @@ public abstract class BaseService {
         return serializer;
     }
 
-    //todo: abstract via AtlasTypeSystem
-    // ensure that the thread wasn't re-pooled with an existing transaction
-    protected void initializeGraphTransaction() {
-        TitanGraphProvider.getGraphInstance().rollback();
-    }
 
     private RuntimeException wrapRuntimeException(RuntimeException e) {
         return e instanceof CatalogRuntimeException ? e : new CatalogRuntimeException(e);

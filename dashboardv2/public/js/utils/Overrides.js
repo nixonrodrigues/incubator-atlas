@@ -16,24 +16,48 @@
  * limitations under the License.
  */
 
-define(['require', 'backgrid', 'asBreadcrumbs'], function(require) {
+define(['require', 'utils/Utils', 'marionette', 'backgrid', 'asBreadcrumbs', 'jquery-placeholder'], function(require, Utils) {
     'use strict';
 
-    $.asBreadcrumbs.prototype.generateChildrenInfo = function() {
-        var self = this;
-        this.$children.each(function() {
-            var $this = $(this);
-            self.childrenInfo.push({
-                $this: $this,
-                outerWidth: $this.outerWidth(),
-                $content: $(self.options.dropdownContent($this))
-            });
-        });
-        if (this.options.overflow === "left") {
-            this.childrenInfo.reverse();
+    Backbone.$.ajaxSetup({
+        cache: false
+    });
+
+    var oldBackboneSync = Backbone.sync;
+    Backbone.sync = function(method, model, options) {
+        var that = this;
+        return oldBackboneSync.apply(this, [method, model,
+            _.extend(options, {
+                error: function(response) {
+                    if (!options.skipDefaultError) {
+                        Utils.defaultErrorHandler(that, response);
+                    }
+                    that.trigger("error", that, response);
+                    if (options.cust_error) {
+                        options.cust_error(that, response);
+                    }
+                }
+            })
+        ]);
+    }
+    _.mixin({
+        isEmptyArray: function(val) {
+            if (val && _.isArray(val)) {
+                return _.isEmpty(val);
+            } else {
+                return false;
+            }
         }
-        this.childrenLength = this.childrenInfo.length;
-    };
+    });
+    // For placeholder support 
+    if (!('placeholder' in HTMLInputElement.prototype)) {
+        var originalRender = Backbone.Marionette.LayoutView.prototype.render;
+        Backbone.Marionette.LayoutView.prototype.render = function() {
+            originalRender.apply(this, arguments);
+            this.$('input, textarea').placeholder();
+        }
+    }
+
     String.prototype.trunc = String.prototype.trunc ||
         function(n) {
             return (this.length > n) ? this.substr(0, n - 1) + '...' : this;
@@ -57,7 +81,7 @@ define(['require', 'backgrid', 'asBreadcrumbs'], function(require) {
             var that = this;
             Backgrid.HeaderRow.__super__.render.apply(this, arguments);
             _.each(this.columns.models, function(modelValue) {
-                if (modelValue.get('width')) that.$el.find('.' + modelValue.get('name')).css('width', modelValue.get('width') + '%')
+                if (modelValue.get('width')) that.$el.find('.' + modelValue.get('name')).css('min-width', modelValue.get('width') + 'px')
                 if (modelValue.get('toolTip')) that.$el.find('.' + modelValue.get('name')).attr('title', modelValue.get('toolTip'))
             });
             return this;
@@ -116,4 +140,8 @@ define(['require', 'backgrid', 'asBreadcrumbs'], function(require) {
             return this;
         }
     });
+
+    String.prototype.capitalize = function() {
+        return this.charAt(0).toUpperCase() + this.slice(1);
+    }
 });

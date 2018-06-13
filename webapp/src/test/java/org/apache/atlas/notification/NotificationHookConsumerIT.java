@@ -18,43 +18,44 @@
 
 package org.apache.atlas.notification;
 
-import com.google.inject.Inject;
 import org.apache.atlas.EntityAuditEvent;
+import org.apache.atlas.kafka.NotificationProvider;
 import org.apache.atlas.notification.hook.HookNotification;
 import org.apache.atlas.typesystem.Referenceable;
 import org.apache.atlas.typesystem.persistence.Id;
-import org.apache.atlas.web.resources.BaseResourceIT;
+import org.apache.atlas.web.integration.BaseResourceIT;
 import org.codehaus.jettison.json.JSONArray;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
-import org.testng.annotations.Guice;
 import org.testng.annotations.Test;
 
 import java.util.List;
 
 import static org.testng.Assert.assertEquals;
 
-@Guice(modules = NotificationModule.class)
 public class NotificationHookConsumerIT extends BaseResourceIT {
 
     private static final String TEST_USER = "testuser";
+    public static final String NAME = "name";
+    public static final String DESCRIPTION = "description";
+    public static final String QUALIFIED_NAME = "qualifiedName";
+    public static final String CLUSTER_NAME = "clusterName";
 
-    @Inject
-    private NotificationInterface kafka;
+    private NotificationInterface notificationInterface = NotificationProvider.get();
 
     @BeforeClass
     public void setUp() throws Exception {
         super.setUp();
-        createTypeDefinitions();
+        createTypeDefinitionsV1();
     }
 
     @AfterClass
     public void teardown() throws Exception {
-        kafka.close();
+        notificationInterface.close();
     }
 
     private void sendHookMessage(HookNotification.HookNotificationMessage message) throws NotificationException {
-        kafka.send(NotificationInterface.NotificationType.HOOK, message);
+        notificationInterface.send(NotificationInterface.NotificationType.HOOK, message);
     }
 
     @Test
@@ -64,15 +65,18 @@ public class NotificationHookConsumerIT extends BaseResourceIT {
                 new Referenceable(randomString())));
 
         //send valid message
-        final Referenceable entity = new Referenceable(DATABASE_TYPE);
-        entity.set("name", "db" + randomString());
-        entity.set("description", randomString());
+        final Referenceable entity = new Referenceable(DATABASE_TYPE_BUILTIN);
+        String dbName = "db" + randomString();
+        entity.set(NAME, dbName);
+        entity.set(DESCRIPTION, randomString());
+        entity.set(QUALIFIED_NAME, dbName);
+        entity.set(CLUSTER_NAME, randomString());
         sendHookMessage(new HookNotification.EntityCreateRequest(TEST_USER, entity));
 
         waitFor(MAX_WAIT_TIME, new Predicate() {
             @Override
             public boolean evaluate() throws Exception {
-                JSONArray results = searchByDSL(String.format("%s where name='%s'", DATABASE_TYPE, entity.get("name")));
+                JSONArray results = searchByDSL(String.format("%s where name='%s'", DATABASE_TYPE_BUILTIN, entity.get(NAME)));
                 return results.length() == 1;
             }
         });
@@ -80,95 +84,107 @@ public class NotificationHookConsumerIT extends BaseResourceIT {
 
     @Test
     public void testCreateEntity() throws Exception {
-        final Referenceable entity = new Referenceable(DATABASE_TYPE);
-        entity.set("name", "db" + randomString());
-        entity.set("description", randomString());
+        final Referenceable entity = new Referenceable(DATABASE_TYPE_BUILTIN);
+        String dbName = "db" + randomString();
+        entity.set(NAME, dbName);
+        entity.set(DESCRIPTION, randomString());
+        entity.set(QUALIFIED_NAME, dbName);
+        entity.set(CLUSTER_NAME, randomString());
 
         sendHookMessage(new HookNotification.EntityCreateRequest(TEST_USER, entity));
 
         waitFor(MAX_WAIT_TIME, new Predicate() {
             @Override
             public boolean evaluate() throws Exception {
-                JSONArray results = searchByDSL(String.format("%s where name='%s'", DATABASE_TYPE, entity.get("name")));
+                JSONArray results = searchByDSL(String.format("%s where qualifiedName='%s'", DATABASE_TYPE_BUILTIN, entity.get(QUALIFIED_NAME)));
                 return results.length() == 1;
             }
         });
 
         //Assert that user passed in hook message is used in audit
-        Referenceable instance = serviceClient.getEntity(DATABASE_TYPE, "name", (String) entity.get("name"));
+        Referenceable instance = atlasClientV1.getEntity(DATABASE_TYPE_BUILTIN, QUALIFIED_NAME, (String) entity.get(QUALIFIED_NAME));
         List<EntityAuditEvent> events =
-                serviceClient.getEntityAuditEvents(instance.getId()._getId(), (short) 1);
+                atlasClientV1.getEntityAuditEvents(instance.getId()._getId(), (short) 1);
         assertEquals(events.size(), 1);
         assertEquals(events.get(0).getUser(), TEST_USER);
     }
 
     @Test
     public void testUpdateEntityPartial() throws Exception {
-        final Referenceable entity = new Referenceable(DATABASE_TYPE);
+        final Referenceable entity = new Referenceable(DATABASE_TYPE_BUILTIN);
         final String dbName = "db" + randomString();
-        entity.set("name", dbName);
-        entity.set("description", randomString());
-        serviceClient.createEntity(entity);
+        entity.set(NAME, dbName);
+        entity.set(DESCRIPTION, randomString());
+        entity.set(QUALIFIED_NAME, dbName);
+        entity.set(CLUSTER_NAME, randomString());
 
-        final Referenceable newEntity = new Referenceable(DATABASE_TYPE);
+        atlasClientV1.createEntity(entity);
+
+        final Referenceable newEntity = new Referenceable(DATABASE_TYPE_BUILTIN);
         newEntity.set("owner", randomString());
         sendHookMessage(
-                new HookNotification.EntityPartialUpdateRequest(TEST_USER, DATABASE_TYPE, "name", dbName, newEntity));
+                new HookNotification.EntityPartialUpdateRequest(TEST_USER, DATABASE_TYPE_BUILTIN, QUALIFIED_NAME, dbName, newEntity));
         waitFor(MAX_WAIT_TIME, new Predicate() {
             @Override
             public boolean evaluate() throws Exception {
-                Referenceable localEntity = serviceClient.getEntity(DATABASE_TYPE, "name", dbName);
+                Referenceable localEntity = atlasClientV1.getEntity(DATABASE_TYPE_BUILTIN, QUALIFIED_NAME, dbName);
                 return (localEntity.get("owner") != null && localEntity.get("owner").equals(newEntity.get("owner")));
             }
         });
 
         //Its partial update and un-set fields are not updated
-        Referenceable actualEntity = serviceClient.getEntity(DATABASE_TYPE, "name", dbName);
-        assertEquals(actualEntity.get("description"), entity.get("description"));
+        Referenceable actualEntity = atlasClientV1.getEntity(DATABASE_TYPE_BUILTIN, QUALIFIED_NAME, dbName);
+        assertEquals(actualEntity.get(DESCRIPTION), entity.get(DESCRIPTION));
     }
 
     @Test
     public void testUpdatePartialUpdatingQualifiedName() throws Exception {
-        final Referenceable entity = new Referenceable(DATABASE_TYPE);
+        final Referenceable entity = new Referenceable(DATABASE_TYPE_BUILTIN);
         final String dbName = "db" + randomString();
-        entity.set("name", dbName);
-        entity.set("description", randomString());
-        serviceClient.createEntity(entity);
+        entity.set(NAME, dbName);
+        entity.set(DESCRIPTION, randomString());
+        entity.set(QUALIFIED_NAME, dbName);
+        entity.set(CLUSTER_NAME, randomString());
 
-        final Referenceable newEntity = new Referenceable(DATABASE_TYPE);
+        atlasClientV1.createEntity(entity);
+
+        final Referenceable newEntity = new Referenceable(DATABASE_TYPE_BUILTIN);
         final String newName = "db" + randomString();
-        newEntity.set("name", newName);
+        newEntity.set(QUALIFIED_NAME, newName);
 
         sendHookMessage(
-                new HookNotification.EntityPartialUpdateRequest(TEST_USER, DATABASE_TYPE, "name", dbName, newEntity));
+                new HookNotification.EntityPartialUpdateRequest(TEST_USER, DATABASE_TYPE_BUILTIN, QUALIFIED_NAME, dbName, newEntity));
         waitFor(MAX_WAIT_TIME, new Predicate() {
             @Override
             public boolean evaluate() throws Exception {
-                JSONArray results = searchByDSL(String.format("%s where name='%s'", DATABASE_TYPE, newName));
+                JSONArray results = searchByDSL(String.format("%s where qualifiedName='%s'", DATABASE_TYPE_BUILTIN, newName));
                 return results.length() == 1;
             }
         });
 
         //no entity with the old qualified name
-        JSONArray results = searchByDSL(String.format("%s where name='%s'", DATABASE_TYPE, dbName));
+        JSONArray results = searchByDSL(String.format("%s where qualifiedName='%s'", DATABASE_TYPE_BUILTIN, dbName));
         assertEquals(results.length(), 0);
 
     }
 
     @Test
     public void testDeleteByQualifiedName() throws Exception {
-        Referenceable entity = new Referenceable(DATABASE_TYPE);
+        Referenceable entity = new Referenceable(DATABASE_TYPE_BUILTIN);
         final String dbName = "db" + randomString();
-        entity.set("name", dbName);
-        entity.set("description", randomString());
-        final String dbId = serviceClient.createEntity(entity).get(0);
+        entity.set(NAME, dbName);
+        entity.set(DESCRIPTION, randomString());
+        entity.set(QUALIFIED_NAME, dbName);
+        entity.set(CLUSTER_NAME, randomString());
+
+        final String dbId = atlasClientV1.createEntity(entity).get(0);
 
         sendHookMessage(
-            new HookNotification.EntityDeleteRequest(TEST_USER, DATABASE_TYPE, "name", dbName));
+            new HookNotification.EntityDeleteRequest(TEST_USER, DATABASE_TYPE_BUILTIN, QUALIFIED_NAME, dbName));
         waitFor(MAX_WAIT_TIME, new Predicate() {
             @Override
             public boolean evaluate() throws Exception {
-                Referenceable getEntity = serviceClient.getEntity(dbId);
+                Referenceable getEntity = atlasClientV1.getEntity(dbId);
                 return getEntity.getId().getState() == Id.EntityState.DELETED;
             }
         });
@@ -176,29 +192,34 @@ public class NotificationHookConsumerIT extends BaseResourceIT {
 
     @Test
     public void testUpdateEntityFullUpdate() throws Exception {
-        Referenceable entity = new Referenceable(DATABASE_TYPE);
+        Referenceable entity = new Referenceable(DATABASE_TYPE_BUILTIN);
         final String dbName = "db" + randomString();
-        entity.set("name", dbName);
-        entity.set("description", randomString());
-        serviceClient.createEntity(entity);
+        entity.set(NAME, dbName);
+        entity.set(DESCRIPTION, randomString());
+        entity.set(QUALIFIED_NAME, dbName);
+        entity.set(CLUSTER_NAME, randomString());
 
-        final Referenceable newEntity = new Referenceable(DATABASE_TYPE);
-        newEntity.set("name", dbName);
-        newEntity.set("description", randomString());
+        atlasClientV1.createEntity(entity);
+
+        final Referenceable newEntity = new Referenceable(DATABASE_TYPE_BUILTIN);
+        newEntity.set(NAME, randomString());
+        newEntity.set(DESCRIPTION, randomString());
         newEntity.set("owner", randomString());
+        newEntity.set(QUALIFIED_NAME, dbName);
+        newEntity.set(CLUSTER_NAME, randomString());
 
         //updating unique attribute
         sendHookMessage(new HookNotification.EntityUpdateRequest(TEST_USER, newEntity));
         waitFor(MAX_WAIT_TIME, new Predicate() {
             @Override
             public boolean evaluate() throws Exception {
-                JSONArray results = searchByDSL(String.format("%s where name='%s'", DATABASE_TYPE, dbName));
+                JSONArray results = searchByDSL(String.format("%s where qualifiedName='%s'", DATABASE_TYPE_BUILTIN, newEntity.get(QUALIFIED_NAME)));
                 return results.length() == 1;
             }
         });
 
-        Referenceable actualEntity = serviceClient.getEntity(DATABASE_TYPE, "name", dbName);
-        assertEquals(actualEntity.get("description"), newEntity.get("description"));
+        Referenceable actualEntity = atlasClientV1.getEntity(DATABASE_TYPE_BUILTIN, QUALIFIED_NAME, dbName);
+        assertEquals(actualEntity.get(DESCRIPTION), newEntity.get(DESCRIPTION));
         assertEquals(actualEntity.get("owner"), newEntity.get("owner"));
     }
 

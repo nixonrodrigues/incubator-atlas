@@ -19,31 +19,30 @@
 define(['require',
     'utils/Globals',
     'collection/BaseCollection',
-    'models/VTag'
-], function(require, Globals, BaseCollection, VTag) {
+    'models/VTag',
+    'utils/UrlLinks'
+], function(require, Globals, BaseCollection, VTag, UrlLinks) {
     'use strict';
     var VTagList = BaseCollection.extend(
         //Prototypal attributes
         {
-            url: Globals.baseURL + '/api/atlas/types',
+            url: UrlLinks.classificationDefApiUrl(),
             model: VTag,
             initialize: function() {
                 this.modelName = 'VTag';
-                this.modelAttrName = 'results';
-                this.bindErrorEvents();
+                this.modelAttrName = 'classificationDefs';
             },
             parseRecords: function(resp, options) {
                 try {
                     if (!this.modelAttrName) {
                         throw new Error("this.modelAttrName not defined for " + this);
                     }
-                    var arr = [];
-                    resp[this.modelAttrName].forEach(function(d) {
-                        arr.push({
-                            tags: d
-                        });
-                    });
-                    return arr;
+                    if (resp[this.modelAttrName]) {
+                        return resp[this.modelAttrName];
+                    } else {
+                        return resp
+                    }
+
                 } catch (e) {
                     console.log(e);
                 }

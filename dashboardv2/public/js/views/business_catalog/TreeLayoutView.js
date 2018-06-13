@@ -22,8 +22,9 @@ define(['require',
     'utils/Utils',
     'collection/VCatalogList',
     'utils/CommonViewFunction',
-    'utils/Messages'
-], function(require, Backbone, TreeLayoutView_tmpl, Utils, VCatalogList, CommonViewFunction, Messages) {
+    'utils/Messages',
+    'utils/UrlLinks'
+], function(require, Backbone, TreeLayoutView_tmpl, Utils, VCatalogList, CommonViewFunction, Messages, UrlLinks) {
     'use strict';
 
     var TreeLayoutView = Backbone.Marionette.LayoutView.extend(
@@ -91,7 +92,7 @@ define(['require',
              * @constructs
              */
             initialize: function(options) {
-                _.extend(this, _.pick(options, 'globalVent', 'url', 'viewBased'));
+                _.extend(this, _.pick(options, 'url', 'viewBased'));
                 this.parentCollection = new VCatalogList();
                 this.childCollection = new VCatalogList();
                 this.taxanomy = new VCatalogList();
@@ -118,19 +119,9 @@ define(['require',
                     this.termSearchData();
                 }, this);
                 this.listenTo(this.childCollection, 'error', function(model, response) {
-                    if (response && response.responseJSON && response.responseJSON.message) {
-                        Utils.notifyError({
-                            content: response.responseJSON.message
-                        });
-                    }
                     this.hideLoader();
                 }, this);
                 this.listenTo(this.parentCollection, 'error', function(model, response) {
-                    if (response && response.responseJSON && response.responseJSON.message) {
-                        Utils.notifyError({
-                            content: response.responseJSON.message
-                        });
-                    }
                     this.hideLoader();
                 }, this);
             },
@@ -251,18 +242,18 @@ define(['require',
                     if (parentURL) {
                         this.url = parentURL;
                     } else {
-                        this.url = "api/atlas/v1/taxonomies";
+                        this.url = UrlLinks.taxonomiesApiUrl();
                     }
                 }
                 this.showLoader();
                 if (isParent) {
                     this.parentCollection.url = this.url;
                     this.parentCollection.fullCollection.reset(undefined, { silent: true });
-                    this.parentCollection.fetch({ reset: true });
+                    this.parentCollection.fetch({ reset: true, cache: true });
                 } else {
                     this.childCollection.url = this.url + "?hierarchy/path:.";
                     this.childCollection.fullCollection.reset(undefined, { silent: true });
-                    this.childCollection.fetch({ reset: true });
+                    this.childCollection.fetch({ reset: true, cache: true });
                 }
             },
             showLoader: function() {
@@ -308,18 +299,20 @@ define(['require',
                 var that = this;
                 _.each(this.taxanomy.models, function(model, key) {
                     var name = model.get('name');
-                    that.termCollection.url = "/api/atlas/v1/taxonomies/" + name + "/terms";
+                    that.termCollection.url = UrlLinks.taxonomiesTermsApiUrl(name)
                 });
                 this.termCollection.fetch({ reset: true });
             },
             termSearchData: function() {
                 var that = this;
                 var str = '<option></option>';
-                for (var j = 0; j < this.termCollection.models.length; j++) {
-                    var terms = this.termCollection.models[j].attributes.name;
-                    str += '<option>' + terms + '</option>';
-                    this.ui.searchTermInput.html(str);
-                }
+                this.termCollection.fullCollection.comparator = function(model) {
+                    return model.get('name');
+                };
+                this.termCollection.fullCollection.sort().each(function(model) {
+                    str += '<option>' + model.get('name') + '</option>';
+                });
+                this.ui.searchTermInput.html(str);
                 // this.ui.searchTermInput.setAttribute('data-href' : that.termCollection.url);
                 this.ui.searchTermInput.select2({
                     placeholder: "Search Term",
@@ -342,10 +335,10 @@ define(['require',
                 });
             },
             selectFirstElement: function() {
-                var dataURL = this.$('.taxonomyTree').find('li[data-id="Parent"]').find("a").data('href')
+                var dataURL = this.$('.taxonomyTree').find('li[data-id="Parent"]').find("a").data('href');
                 if (dataURL) {
                     this.url = dataURL;
-                    if (this.viewBased) {
+                    if (this.viewBased && Utils.getUrlState.isTaxonomyTab()) {
                         Utils.setUrl({
                             url: "#!/taxonomy/detailCatalog" + dataURL,
                             mergeBrowserUrl: false,
@@ -401,7 +394,10 @@ define(['require',
                 }
 
                 function createTerm() {
-                    _.each(that.childCollection.fullCollection.models, function(model, key) {
+                    that.childCollection.fullCollection.comparator = function(model) {
+                        return model.get('name').toLowerCase();
+                    };
+                    that.childCollection.fullCollection.sort().each(function(model, key) {
                         var name = Utils.checkTagOrTerm(model.get('name'), true);
                         var hrefUrl = "/api" + model.get('href').split("/api")[1];
                         if (name.name) {
@@ -480,11 +476,11 @@ define(['require',
                     view.ui.termName.on('keyup', function() {
                         if (this.value.indexOf(' ') >= 0) {
                             modal.$el.find('button.ok').prop('disabled', true);
-                            view.ui.termName.addClass("addTermDiable");
+                            view.ui.termName.addClass("addTermDisable");
                             view.$('.alertTerm').show();
                         } else {
                             modal.$el.find('button.ok').prop('disabled', false);
-                            view.ui.termName.removeClass("addTermDiable");
+                            view.ui.termName.removeClass("addTermDisable");
                             view.$('.alertTerm').hide();
                         }
                     });
@@ -508,11 +504,6 @@ define(['require',
                             content: "Term " + view.ui.termName.val() + Messages.addSuccessMessage
                         });
                     },
-                    error: function(model, response) {
-                        Utils.notifyError({
-                            content: "Term " + view.ui.termName.val() + Messages.addErrorMessage
-                        });
-                    },
                     complete: function() {
                         that.hideLoader();
                     }
@@ -523,7 +514,7 @@ define(['require',
                     assetName = $(e.target).data("assetname"),
                     that = this,
                     modal = CommonViewFunction.deleteTagModel({
-                        msg: "<div class='ellipsis'>Delete: " + "<b>" + termName + "?</b></div>" +
+                        msg: "<div class='ellipsis'>Delete: " + "<b>" + _.escape(termName) + "?</b></div>" +
                             "<p class='termNote'>Assets mapped to this term will be unclassified.</p>",
                         titleMessage: Messages.deleteTerm,
                         buttonText: "Delete"
@@ -543,6 +534,7 @@ define(['require',
                         url = that.$('.taxonomyTree').find('li.active a').data('href');
                     var termName = that.$('.taxonomyTree').find('li.active a').text();
                     termModel.deleteTerm(url, {
+                        skipDefaultError: true,
                         success: function(data) {
                             Utils.notifySuccess({
                                 content: "Term " + termName + Messages.deleteSuccessMessage
@@ -560,10 +552,10 @@ define(['require',
                             }
                             that.fetchCollection(termURL, true);
                         },
-                        error: function(error, data, status) {
+                        cust_error: function(model, response) {
                             var message = "Term " + termName + Messages.deleteErrorMessage;
-                            if (data.error) {
-                                message = data.error;
+                            if (response && response.responseJSON) {
+                                message = response.responseJSON.errorMessage;
                             }
                             Utils.notifyError({
                                 content: message
@@ -607,8 +599,9 @@ define(['require',
                     'modules/Modal'
                 ], function(AddTermLayoutView, Modal) {
                     var view = new AddTermLayoutView({
-                        url: "/api/atlas/v1/taxonomies",
-                        model: new that.parentCollection.model()
+                        url: UrlLinks.taxonomiesApiUrl(),
+                        model: new that.parentCollection.model(),
+                        defaultTerm: true
                     });
                     var modal = new Modal({
                         title: 'Taxonomy',
@@ -622,15 +615,14 @@ define(['require',
                     modal.on('ok', function() {
                         that.saveDefaultTaxonomy(view);
                     });
-                    view.ui.termName.attr("placeholder", "Enter Taxonomy Name");
                     view.ui.termName.on('keyup', function() {
                         if (this.value.indexOf(' ') >= 0) {
                             modal.$el.find('button.ok').prop('disabled', true);
-                            view.ui.termName.addClass("addTermDiable");
+                            view.ui.termName.addClass("addTermDisable");
                             view.$('.alertTerm').show();
                         } else {
                             modal.$el.find('button.ok').prop('disabled', false);
-                            view.ui.termName.removeClass("addTermDiable");
+                            view.ui.termName.removeClass("addTermDisable");
                             view.$('.alertTerm').hide();
                         }
                     });
@@ -645,13 +637,14 @@ define(['require',
                 view.model.url = url + "/" + view.ui.termName.val();
                 this.showLoader();
                 view.model.set({ description: view.ui.termDetail.val() }).save(null, {
+                    skipDefaultError: true,
                     success: function(model, response) {
                         that.fetchCollection(view.model.url, true);
                         Utils.notifySuccess({
                             content: "Default taxonomy " + view.ui.termName.val() + Messages.addSuccessMessage
                         });
                     },
-                    error: function(error, data, status) {
+                    cust_error: function(model, response) {
                         Utils.notifyError({
                             content: "Default taxonomy " + view.ui.termName.val() + Messages.addErrorMessage
                         });

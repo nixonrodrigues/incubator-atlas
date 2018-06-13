@@ -22,12 +22,21 @@ define(['require',
     'collection/VCommonList',
     'modules/Modal',
     'models/VEntity',
-    'utils/Utils'
-], function(require, AddTagModalViewTmpl, VTagList, VCommonList, Modal, VEntity, Utils) {
+    'utils/Utils',
+    'utils/UrlLinks',
+    'utils/Enums',
+    'utils/Messages',
+    'daterangepicker'
+], function(require, AddTagModalViewTmpl, VTagList, VCommonList, Modal, VEntity, Utils, UrlLinks, Enums, Messages) {
     'use strict';
 
     var AddTagModel = Marionette.LayoutView.extend({
         template: AddTagModalViewTmpl,
+        templateHelpers: function() {
+            return {
+                tagModel: this.tagModel
+            };
+        },
 
         regions: {},
         ui: {
@@ -44,21 +53,128 @@ define(['require',
          * @constructs
          */
         initialize: function(options) {
-            var that = this;
-            _.extend(this, _.pick(options, 'vent', 'modalCollection', 'guid', 'callback'));
+            _.extend(this, _.pick(options, 'modalCollection', 'guid', 'callback', 'multiple', 'showLoader', 'hideLoader', 'tagList', 'tagModel', 'enumDefCollection'));
             this.collection = new VTagList();
-            this.commonCollection = new VCommonList();
-            this.modal = new Modal({
-                title: 'Add Tag',
-                content: this,
-                okText: 'Add',
-                cancelText: "Cancel",
-                allowCancel: true,
-            }).open();
-            // var saveBtn = this.modal.$el.find('.btn-atlas');
-            // saveBtn[0].setAttribute('disabled', true);
+            this.commonCollection = new VTagList();
+            var that = this,
+                modalObj = {
+                    title: 'Add Tag',
+                    content: this,
+                    okText: 'Add',
+                    cancelText: "Cancel",
+                    allowCancel: true,
+                };
+            if (this.tagModel) {
+                modalObj.title = 'Edit Tag';
+                modalObj.okText = 'Update';
+            }
+            this.modal = new Modal(modalObj).open();
+            this.modal.$el.find('button.ok').attr("disabled", true);
             this.on('ok', function() {
-                that.saveTagData();
+                var tagName = this.tagModel ? this.tagModel.typeName : this.ui.addTagOptions.val(),
+                    tagAttributes = {},
+                    tagAttributeNames = this.$(".attrName"),
+                    obj = {
+                        tagName: tagName,
+                        tagAttributes: tagAttributes,
+                        guid: [],
+                        skipEntity: [],
+                        deletedEntity: []
+                    };
+                tagAttributeNames.each(function(i, item) {
+                    var selection = $(item).data("key");
+                    var datatypeSelection = $(item).data("type");
+                    if (datatypeSelection === "date") {
+                        tagAttributes[selection] = Date.parse($(item).val()) || null;
+                    } else {
+                        tagAttributes[selection] = $(item).val() || null;
+                    }
+                });
+
+                if (that.multiple) {
+                    _.each(that.multiple, function(entity, i) {
+                        var name = Utils.getName(entity.model);
+                        if (Enums.entityStateReadOnly[entity.model.status]) {
+                            obj.deletedEntity.push(name);
+                        } else {
+                            if (_.indexOf((entity.model.classificationNames || _.pluck(entity.model.classifications, 'typeName')), tagName) === -1) {
+                                obj.guid.push(entity.model.guid)
+                            } else {
+                                obj.skipEntity.push(name);
+                            }
+                        }
+                    });
+                    if (obj.deletedEntity.length) {
+                        Utils.notifyError({
+                            html: true,
+                            content: "<b>" + obj.deletedEntity.join(', ') +
+                                "</b> " + (obj.deletedEntity.length === 1 ? "entity " : "entities ") +
+                                Messages.assignDeletedEntity
+                        });
+                    }
+                    if (obj.skipEntity.length) {
+                        var text = "<b>" + obj.skipEntity.length + " of " + that.multiple.length +
+                            "</b> entities selected have already been associated with <b>" + tagName +
+                            "</b> tag, Do you want to associate the tag with other entities ?",
+                            removeCancelButton = false;
+                        if ((obj.skipEntity.length + obj.deletedEntity.length) === that.multiple.length) {
+                            text = (obj.skipEntity.length > 1 ? "All selected" : "Selected") + " entities have already been associated with <b>" + tagName + "</b> tag";
+                            removeCancelButton = true;
+                        }
+                        var notifyObj = {
+                            text: text,
+                            modal: true,
+                            ok: function(argument) {
+                                if (obj.guid.length) {
+                                    that.saveTagData(obj);
+                                } else {
+                                    that.hideLoader();
+                                }
+                            },
+                            cancel: function(argument) {
+                                that.hideLoader();
+                                obj = {
+                                    tagName: tagName,
+                                    tagAttributes: tagAttributes,
+                                    guid: [],
+                                    skipEntity: [],
+                                    deletedEntity: []
+                                }
+                            }
+                        }
+                        if (removeCancelButton) {
+                            notifyObj['confirm'] = {
+                                confirm: true,
+                                buttons: [{
+                                        text: 'Ok',
+                                        addClass: 'btn-primary',
+                                        click: function(notice) {
+                                            notice.remove();
+                                            obj = {
+                                                tagName: tagName,
+                                                tagAttributes: tagAttributes,
+                                                guid: [],
+                                                skipEntity: [],
+                                                deletedEntity: []
+                                            }
+                                        }
+                                    },
+                                    null
+                                ]
+                            }
+                        }
+                        Utils.notifyConfirm(notifyObj)
+                    } else {
+                        if (obj.guid.length) {
+                            that.saveTagData(obj);
+                        } else {
+                            that.hideLoader();
+                        }
+                    }
+                } else {
+                    obj.guid.push(that.guid);
+                    that.saveTagData(obj);
+                }
             });
             this.on('closeModal', function() {
                 this.modal.trigger('cancel');
@@ -67,10 +183,22 @@ define(['require',
         },
 
         onRender: function() {
-            $.extend(this.collection.queryParams, { type: 'TRAIT', notsupertype: 'TaxonomyTerm' });
-            this.collection.fetch({ reset: true });
+            var that = this;
+            $.extend(this.collection.queryParams, { type: 'classification' });
+            this.hideAttributeBox();
+            this.collection.fetch({
+                reset: true,
+                complete: function() {
+                    if (that.tagModel) {
+                        that.fetchTagSubData(that.tagModel.typeName);
+                    }
+                    that.showAttributeBox();
+                },
+            });
         },
         bindEvents: function() {
+            var that = this;
+            this.enumArr = [];
             this.listenTo(this.collection, 'reset', function() {
                 this.tagsCollection();
             }, this);
@@ -79,86 +207,170 @@ define(['require',
             }, this);
         },
         tagsCollection: function() {
+            var that = this;
+            this.collection.fullCollection.comparator = function(model) {
+                return Utils.getName(model.toJSON(), 'name').toLowerCase();
+            }
+
             var str = '<option selected="selected" disabled="disabled">-- Select a tag from the dropdown list --</option>';
-            _.each(this.collection.fullCollection.models, function(obj, key) {
-                str += '<option>' + obj.get('tags') + '</option>';
+            this.collection.fullCollection.sort().each(function(obj, key) {
+                var name = Utils.getName(obj.toJSON(), 'name');
+                if (name === "TaxonomyTerm") {
+                    return;
+                }
+                // using obj.get('name') insted of name variable because if html is presen in name then escaped name will not found in tagList.
+                if (_.indexOf(that.tagList, obj.get('name')) === -1) {
+                    str += '<option ' + (that.tagModel && that.tagModel.typeName === name ? 'selected' : '') + '>' + name + '</option>';
+                }
             });
             this.ui.addTagOptions.html(str);
             this.ui.addTagOptions.select2({
                 placeholder: "Select Tag",
-                allowClear: true
+                allowClear: false
             });
         },
         onChangeTagDefination: function() {
+            this.ui.addTagOptions.select2("open").select2("close");
             this.ui.tagAttribute.empty();
-            var saveBtn = this.modal.$el.find('.btn-success');
+            var saveBtn = this.modal.$el.find('button.ok');
             saveBtn.prop("disabled", false);
             var tagname = this.ui.addTagOptions.val();
+            this.hideAttributeBox();
             this.fetchTagSubData(tagname);
         },
         fetchTagSubData: function(tagname) {
-            this.commonCollection.url = "/api/atlas/types/" + tagname;
-            this.commonCollection.modelAttrName = 'definition';
-            this.commonCollection.fetch({ reset: true });
+            var attributeDefs = Utils.getNestedSuperTypeObj({
+                data: this.collection.fullCollection.find({ name: tagname }).toJSON(),
+                collection: this.collection,
+                attrMerge: true
+            });
+            this.subAttributeData(attributeDefs);
         },
-        subAttributeData: function() {
-            if (this.commonCollection.models[0] && this.commonCollection.models[0].attributes && this.commonCollection.models[0].attributes.traitTypes[0].attributeDefinitions) {
-                var strAttribute = '<p>Tag Attributes(optional)</p>' +
-                    '<p class="tagAttributeLabel">Add attribute values for this tag</p>';
-                for (var i = 0; i < this.commonCollection.models[0].attributes.traitTypes[0].attributeDefinitions.length; i++) {
-                    var attribute = this.commonCollection.models[0].attributes.traitTypes[0].attributeDefinitions;
-                    this.ui.tagAttribute.show();
-                    strAttribute += '<div class="form-group"><label>' + attribute[i].name + '</label>' +
-                        '<input type="text" class="form-control attributeInputVal attrName" data-key="' + attribute[i].name + '" ></input></div>';
-                    this.ui.tagAttribute.html(strAttribute);
+        showAttributeBox: function() {
+            var that = this;
+            this.$('.attrLoader').hide();
+            this.$('.form-group.hide').removeClass('hide');
+            if (this.ui.tagAttribute.children().length !== 0) {
+                this.ui.tagAttribute.parent().show();
+            }
+            this.ui.tagAttribute.find('input,select').on("keyup change", function(e) {
+                if (e.keyCode != 32) {
+                    that.modal.$el.find('button.ok').attr("disabled", false);
                 }
-                if (this.commonCollection.models[0].attributes.traitTypes[0].superTypes.length > 0) {
-                    for (var j = 0; j < this.commonCollection.models[0].attributes.traitTypes[0].superTypes.length; j++) {
-                        var superTypeAttr = this.commonCollection.models[0].attributes.traitTypes[0].superTypes[j];
-                        this.fetchTagSubData(superTypeAttr);
+            });
+        },
+        hideAttributeBox: function() {
+            this.ui.tagAttribute.children().empty();
+            this.ui.tagAttribute.parent().hide();
+            this.$('.attrLoader').show();
+        },
+        subAttributeData: function(attributeDefs) {
+            var that = this;
+            if (attributeDefs) {
+                _.each(attributeDefs, function(obj) {
+                    var name = Utils.getName(obj, 'name');
+                    var typeName = Utils.getName(obj, 'typeName');
+                    var typeNameValue = that.enumDefCollection.fullCollection.findWhere({ 'name': typeName });
+                    if (typeNameValue) {
+                        var str = '<option value=""' + (!that.tagModel ? 'selected' : '') + '>-- Select ' + typeName + " --</option>";
+                        var enumValue = typeNameValue.get('elementDefs');
+                        _.each(enumValue, function(key, value) {
+                            str += '<option ' + ((that.tagModel && key.value === that.tagModel.attributes[name]) ? 'selected' : '') + '>' + key.value + '</option>';
+                        })
+                        that.ui.tagAttribute.append('<div class="form-group"><label>' + name + '</label>' + ' (' + typeName + ')' +
+                            '<select class="form-control attributeInputVal attrName" data-key="' + name + '">' + str + '</select></div>');
+                    } else {
+                        var textElement = that.getElement(name, typeName);
+                        that.ui.tagAttribute.append('<div class="form-group"><label>' + name + '</label>' + ' (' + typeName + ')' + textElement);
                     }
-                }
+                });
+                that.$('input[data-type="date"]').each(function() {
+                    if (!$(this).data('daterangepicker')) {
+                        var dateObj = {
+                            "singleDatePicker": true,
+                            "showDropdowns": true,
+                            "timePicker": true,
+                            locale: {
+                                format: 'MM/DD/YYYY h:mm A'
+                            }
+                        };
+                        if (that.tagModel) {
+                            var formatDate = Number(this.value);
+                            dateObj["startDate"] = new Date(formatDate);
+                        }
+                        $(this).daterangepicker(dateObj);
+                    }
+                });
+                that.$('select[data-type="boolean"]').each(function() {
+                    var labelName = $(this).data('key');
+                    if (that.tagModel) {
+                        this.value = that.tagModel.attributes[labelName];
+                    }
+                });
+                this.showAttributeBox();
             }
         },
-        saveTagData: function() {
-            var that = this,
-                values = {};
+        getElement: function(labelName, typeName) {
+            var value = this.tagModel && this.tagModel.attributes ? (this.tagModel.attributes[labelName] || "") : "",
+                type = (typeName === "int" || typeName === "long" || typeName === "float" || typeName === "byte" || typeName === "double" || typeName === "short") ? "number" : "text";
+            if (typeName === "boolean") {
+                return '<select class="form-control attributeInputVal attrName" data-key="' + labelName + '" data-type="' + typeName + '"> ' +
+                    '<option value="">--Select true or false--</option>' +
+                    '<option value="true">true</option>' +
+                    '<option value="false">false</option></select>';
+            } else {
+                return '<input type="' + type + '" value="' + value + '" class="form-control attributeInputVal attrName" data-key="' + labelName + '"  data-type="' + typeName + '"></input></div>';
+            }
+        },
+        saveTagData: function(options) {
+            var that = this;
             this.entityModel = new VEntity();
-            var names = this.$(".attrName");
-            names.each(function(i, item) {
-                var selection = $(item).data("key");
-                values[selection] = $(item).val();
-            });
-            var tagName = this.ui.addTagOptions.val();
-            var json = {
-                "jsonClass": "org.apache.atlas.typesystem.json.InstanceSerialization$_Struct",
-                "typeName": tagName,
-                "values": values
-            };
-            that.entityModel.saveEntity(that.guid, {
+            var tagName = options.tagName,
+                tagAttributes = options.tagAttributes,
+                json = {
+                    "classification": {
+                        "typeName": tagName,
+                        "attributes": tagAttributes
+                    },
+                    "entityGuids": options.guid
+                };
+            if (this.tagModel) {
+                json = [{
+                    "typeName": tagName,
+                    "attributes": tagAttributes
+                }]
+            }
+            if (this.showLoader) {
+                this.showLoader();
+            }
+            this.entityModel.saveTraitsEntity(this.tagModel ? options.guid : null, {
+                skipDefaultError: true,
                 data: JSON.stringify(json),
+                type: this.tagModel ? 'PUT' : 'POST',
                 success: function(data) {
+                    var addupdatetext = that.tagModel ? 'updated successfully to ' : 'added to ';
                     Utils.notifySuccess({
-                        content: "Tag " + tagName + " has been added to entity"
+                        content: "Tag " + tagName + " has been " + addupdatetext + (that.multiple ? "entities" : "entity")
                     });
+                    if (options.modalCollection) {
+                        options.modalCollection.fetch({ reset: true });
+                    }
                     if (that.callback) {
                         that.callback();
                     }
-                    if (that.modalCollection) {
-                        that.modalCollection.fetch({ reset: true });
-                    }
                 },
-                error: function(error, data, status) {
+                cust_error: function(model, response) {
                     var message = "Tag " + tagName + " could not be added";
-                    if (error && error.responseText) {
-                        var data = JSON.parse(error.responseText);
-                        message = data.error;
+                    if (response && response.responseJSON) {
+                        message = response.responseJSON.errorMessage;
                     }
                     Utils.notifyError({
                         content: message
                     });
-                },
-                complete: function() {}
+                    if (that.hideLoader) {
+                        that.hideLoader();
+                    }
+                }
             });
         },
     });

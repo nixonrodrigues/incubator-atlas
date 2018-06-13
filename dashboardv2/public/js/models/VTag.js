@@ -18,11 +18,12 @@
 
 define(['require',
     'utils/Globals',
-    'models/BaseModel'
-], function(require, Globals, vBaseModel) {
+    'models/BaseModel',
+    'utils/UrlLinks'
+], function(require, Globals, vBaseModel, UrlLinks) {
     'use strict';
     var VTag = vBaseModel.extend({
-        urlRoot: Globals.baseURL + '/api/atlas/types',
+        urlRoot: UrlLinks.classificationDefApiUrl(),
 
         defaults: {},
 
@@ -32,7 +33,6 @@ define(['require',
 
         initialize: function() {
             this.modelName = 'VTag';
-            this.bindErrorEvents();
         },
         toString: function() {
             return this.get('name');
@@ -40,13 +40,29 @@ define(['require',
         /*************************
          * Non - CRUD operations
          *************************/
-        deleteTag: function(guid, name, options) {
-            var url = Globals.baseURL + '/api/atlas/entities/' + guid + '/traits/' + name;
+        deleteAssociation: function(guid, name, options) {
+            var url = UrlLinks.entitiesApiUrl(guid, name);
             options = _.extend({
                 contentType: 'application/json',
                 dataType: 'json'
             }, options);
             return this.constructor.nonCrudOperation.call(this, url, 'DELETE', options);
+        },
+        deleteTag: function(options) {
+            var url = UrlLinks.classificationDefApiUrl();
+            options = _.extend({
+                contentType: 'application/json',
+                dataType: 'json'
+            }, options);
+            return this.constructor.nonCrudOperation.call(this, url, 'DELETE', options);
+        },
+        saveTagAttribute: function(options) {
+            var url = UrlLinks.classificationDefApiUrl();
+            options = _.extend({
+                contentType: 'application/json',
+                dataType: 'json'
+            }, options);
+            return this.constructor.nonCrudOperation.call(this, url, 'PUT', options);
         }
     }, {});
     return VTag;

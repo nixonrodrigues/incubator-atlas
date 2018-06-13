@@ -20,19 +20,24 @@ package org.apache.atlas.repository.graph;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
-import com.thinkaurelius.titan.core.TitanGraph;
-import com.thinkaurelius.titan.core.util.TitanCleanup;
-import com.tinkerpop.blueprints.Compare;
-import com.tinkerpop.blueprints.GraphQuery;
-import com.tinkerpop.blueprints.Vertex;
-import org.apache.atlas.GraphTransaction;
-import org.apache.atlas.RepositoryMetadataModule;
+import org.apache.atlas.AtlasException;
+import org.apache.atlas.CreateUpdateEntitiesResult;
+import org.apache.atlas.TestModules;
 import org.apache.atlas.RequestContext;
 import org.apache.atlas.TestUtils;
+import org.apache.atlas.annotation.GraphTransaction;
 import org.apache.atlas.discovery.graph.GraphBackedDiscoveryService;
 import org.apache.atlas.query.QueryParams;
 import org.apache.atlas.repository.Constants;
+import org.apache.atlas.repository.MetadataRepository;
 import org.apache.atlas.repository.RepositoryException;
+import org.apache.atlas.repository.graphdb.AtlasEdge;
+import org.apache.atlas.repository.graphdb.AtlasEdgeDirection;
+import org.apache.atlas.repository.graphdb.AtlasGraph;
+import org.apache.atlas.repository.graphdb.AtlasGraphQuery;
+import org.apache.atlas.repository.graphdb.AtlasGraphQuery.ComparisionOperator;
+import org.apache.atlas.repository.graphdb.AtlasVertex;
+import org.apache.atlas.type.AtlasTypeRegistry;
 import org.apache.atlas.typesystem.IStruct;
 import org.apache.atlas.typesystem.ITypedReferenceableInstance;
 import org.apache.atlas.typesystem.ITypedStruct;
@@ -40,7 +45,9 @@ import org.apache.atlas.typesystem.Referenceable;
 import org.apache.atlas.typesystem.Struct;
 import org.apache.atlas.typesystem.exception.EntityNotFoundException;
 import org.apache.atlas.typesystem.exception.TraitNotFoundException;
+import org.apache.atlas.typesystem.persistence.AtlasSystemAttributes;
 import org.apache.atlas.typesystem.persistence.Id;
+import org.apache.atlas.typesystem.types.AttributeDefinition;
 import org.apache.atlas.typesystem.types.ClassType;
 import org.apache.atlas.typesystem.types.DataTypes;
 import org.apache.atlas.typesystem.types.HierarchicalTypeDefinition;
@@ -57,20 +64,27 @@ import org.testng.annotations.BeforeClass;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Guice;
 import org.testng.annotations.Test;
-import scala.actors.threadpool.Arrays;
 
 import javax.inject.Inject;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import static org.apache.atlas.typesystem.types.utils.TypesUtil.createClassTypeDef;
 import static org.apache.atlas.typesystem.types.utils.TypesUtil.createUniqueRequiredAttrDef;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertNotEquals;
+import static org.testng.Assert.assertNotNull;
+import static org.testng.Assert.assertTrue;
 
 /**
  * GraphBackedMetadataRepository test
@@ -78,14 +92,11 @@ import static org.testng.Assert.assertNotEquals;
  * Guice loads the dependencies and injects the necessary objects
  *
  */
-@Guice(modules = RepositoryMetadataModule.class)
+@Guice(modules = TestModules.TestOnlyModule.class)
 public class GraphBackedMetadataRepositoryTest {
 
     @Inject
-    private GraphProvider<TitanGraph> graphProvider;
-
-    @Inject
-    private GraphBackedMetadataRepository repositoryService;
+    private MetadataRepository repositoryService;
 
     @Inject
     private GraphBackedDiscoveryService discoveryService;
@@ -99,7 +110,9 @@ public class GraphBackedMetadataRepositoryTest {
         typeSystem = TypeSystem.getInstance();
         typeSystem.reset();
 
-        new GraphBackedSearchIndexer(graphProvider);
+        assertTrue(repositoryService instanceof GraphBackedMetadataRepository);
+        repositoryService = TestUtils.addTransactionWrapper(repositoryService);
+        new GraphBackedSearchIndexer(new AtlasTypeRegistry());
 
         TestUtils.defineDeptEmployeeTypes(typeSystem);
         TestUtils.createHiveTypes(typeSystem);
@@ -107,35 +120,264 @@ public class GraphBackedMetadataRepositoryTest {
 
     @BeforeMethod
     public void setupContext() {
-        RequestContext.createContext();
+        TestUtils.resetRequestContext();
     }
 
     @AfterClass
     public void tearDown() throws Exception {
         TypeSystem.getInstance().reset();
-        try {
-            //TODO - Fix failure during shutdown while using BDB
-            graphProvider.get().shutdown();
-        } catch (Exception e) {
-            e.printStackTrace();
+//        AtlasGraphProvider.cleanup();
+    }
+
+    @Test
+    //In some cases of parallel APIs, the edge is added, but get edge by label doesn't return the edge. ATLAS-1104
+    public void testConcurrentCalls() throws Exception {
+        final HierarchicalTypeDefinition<ClassType> refType =
+                createClassTypeDef(randomString(), ImmutableSet.<String>of());
+        HierarchicalTypeDefinition<ClassType> type =
+                createClassTypeDef(randomString(), ImmutableSet.<String>of(),
+                        new AttributeDefinition("ref", refType.typeName, Multiplicity.OPTIONAL, true, null));
+        typeSystem.defineClassType(refType);
+        typeSystem.defineClassType(type);
+
+        String refId1 = createEntity(new Referenceable(refType.typeName)).get(0);
+        String refId2 = createEntity(new Referenceable(refType.typeName)).get(0);
+
+        final Referenceable instance1 = new Referenceable(type.typeName);
+        instance1.set("ref", new Referenceable(refId1, refType.typeName, null));
+
+        final Referenceable instance2 = new Referenceable(type.typeName);
+        instance2.set("ref", new Referenceable(refId2, refType.typeName, null));
+
+        ExecutorService executor = Executors.newFixedThreadPool(3);
+        List<Future<Object>> futures = new ArrayList<>();
+        futures.add(executor.submit(new Callable<Object>() {
+            @Override
+            public Object call() throws Exception {
+                return createEntity(instance1).get(0);
+            }
+        }));
+        futures.add(executor.submit(new Callable<Object>() {
+            @Override
+            public Object call() throws Exception {
+                return createEntity(instance2).get(0);
+            }
+        }));
+        futures.add(executor.submit(new Callable<Object>() {
+            @Override
+            public Object call() throws Exception {
+                return discoveryService.searchByDSL(TestUtils.TABLE_TYPE, new QueryParams(10, 0));
+            }
+        }));
+
+        String id1 = (String) futures.get(0).get();
+        String id2 = (String) futures.get(1).get();
+        futures.get(2).get();
+        executor.shutdown();
+
+        boolean validated1 = assertEdge(id1, type.typeName);
+        boolean validated2 = assertEdge(id2, type.typeName);
+        assertTrue(validated1 | validated2);
+    }
+
+    private boolean assertEdge(String id, String typeName) throws Exception {
+        AtlasGraph graph = TestUtils.getGraph();
+        Iterable<AtlasVertex> vertices = graph.query().has(Constants.GUID_PROPERTY_KEY, id).vertices();
+        AtlasVertex AtlasVertex = vertices.iterator().next();
+        Iterable<AtlasEdge> edges = AtlasVertex.getEdges(AtlasEdgeDirection.OUT, Constants.INTERNAL_PROPERTY_KEY_PREFIX + typeName + ".ref");
+        if (!edges.iterator().hasNext()) {
+            ITypedReferenceableInstance entity = repositoryService.getEntityDefinition(id);
+            assertNotNull(entity.get("ref"));
+            return true;
         }
-        try {
-            TitanCleanup.clear(graphProvider.get());
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+        return false;
     }
 
     @Test
     public void testSubmitEntity() throws Exception {
         ITypedReferenceableInstance hrDept = TestUtils.createDeptEg1(typeSystem);
 
-        List<String> guids = repositoryService.createEntities(hrDept);
+        List<String> guids = repositoryService.createEntities(hrDept).getCreatedEntities();
         Assert.assertNotNull(guids);
         Assert.assertEquals(guids.size(), 5);
         guid = guids.get(4);
         Assert.assertNotNull(guid);
     }
+
+    @Test
+    public void testCreateEntityWithOneNestingLevel() throws AtlasException {
+
+        List<Referenceable> toValidate = new ArrayList<>();
+        Referenceable dept = new Referenceable(TestUtils.DEPARTMENT_TYPE);
+        toValidate.add(dept);
+        dept.set(TestUtils.NAME, "test1");
+
+        Referenceable mike = new Referenceable(TestUtils.PERSON_TYPE);
+        toValidate.add(mike);
+
+        mike.set(TestUtils.NAME, "Mike");
+        mike.set(TestUtils.DEPARTMENT_ATTR, dept);
+
+        Referenceable mark = new Referenceable(TestUtils.PERSON_TYPE);
+        toValidate.add(mark);
+        mark.set(TestUtils.NAME, "Mark");
+        mark.set(TestUtils.DEPARTMENT_ATTR, dept);
+
+        dept.set(TestUtils.EMPLOYEES_ATTR, ImmutableList.of(mike, mark));
+        Map<String,Referenceable> positions = new HashMap<>();
+        final String JANITOR = "janitor";
+        final String RECEPTIONIST = "receptionist";
+        positions.put(JANITOR, mike);
+        positions.put(RECEPTIONIST, mark);
+        dept.set(TestUtils.POSITIONS_ATTR, positions);
+
+
+        ClassType deptType = TypeSystem.getInstance().getDataType(ClassType.class, TestUtils.DEPARTMENT_TYPE);
+        ITypedReferenceableInstance deptInstance = deptType.convert(dept, Multiplicity.REQUIRED);
+
+        CreateUpdateEntitiesResult result = repositoryService.createEntities(deptInstance);
+
+        validateGuidMapping(toValidate, result);
+    }
+
+
+    @Test
+    public void testCreateEntityWithTwoNestingLevels() throws AtlasException {
+
+        List<Referenceable> toVerify = new ArrayList<>();
+        Referenceable dept = new Referenceable(TestUtils.DEPARTMENT_TYPE);
+        toVerify.add(dept);
+        dept.set(TestUtils.NAME, "test2");
+
+        Referenceable wallace = new Referenceable(TestUtils.PERSON_TYPE);
+        toVerify.add(wallace);
+        wallace.set(TestUtils.NAME, "Wallace");
+        wallace.set(TestUtils.DEPARTMENT_ATTR, dept);
+
+        Referenceable wallaceComputer = new Referenceable(TestUtils.ASSET_TYPE);
+        toVerify.add(wallaceComputer);
+        wallaceComputer.set("name", "wallaceComputer");
+        wallace.set(TestUtils.ASSETS_ATTR, ImmutableList.of(wallaceComputer));
+
+        Referenceable jordan = new Referenceable(TestUtils.PERSON_TYPE);
+        toVerify.add(jordan);
+        jordan.set(TestUtils.NAME, "Jordan");
+        jordan.set(TestUtils.DEPARTMENT_ATTR, dept);
+
+        Referenceable jordanComputer = new Referenceable(TestUtils.ASSET_TYPE);
+        toVerify.add(jordanComputer);
+        jordanComputer.set("name", "jordanComputer");
+        jordan.set(TestUtils.ASSETS_ATTR, ImmutableList.of(jordanComputer));
+
+        dept.set(TestUtils.EMPLOYEES_ATTR, ImmutableList.of(wallace, jordan));
+        Map<String,Referenceable> positions = new HashMap<>();
+        final String JANITOR = "janitor";
+        final String RECEPTIONIST = "receptionist";
+        positions.put(JANITOR, wallace);
+        positions.put(RECEPTIONIST, jordan);
+        dept.set(TestUtils.POSITIONS_ATTR, positions);
+
+
+        ClassType deptType = TypeSystem.getInstance().getDataType(ClassType.class, TestUtils.DEPARTMENT_TYPE);
+        ITypedReferenceableInstance deptInstance = deptType.convert(dept, Multiplicity.REQUIRED);
+
+        CreateUpdateEntitiesResult result = repositoryService.createEntities(deptInstance);
+        validateGuidMapping(toVerify, result);
+    }
+
+
+    @Test
+    public void testCreateEntityWithThreeNestingLevels() throws AtlasException {
+
+        List<Referenceable> toVerify = new ArrayList<>();
+
+        Referenceable dept = new Referenceable(TestUtils.DEPARTMENT_TYPE);
+        toVerify.add(dept);
+        dept.set(TestUtils.NAME, "test3");
+
+        Referenceable barry = new Referenceable(TestUtils.PERSON_TYPE);
+        toVerify.add(barry);
+        barry.set(TestUtils.NAME, "barry");
+        barry.set(TestUtils.DEPARTMENT_ATTR, dept);
+
+        Referenceable barryComputer = new Referenceable(TestUtils.ASSET_TYPE);
+        toVerify.add(barryComputer);
+        barryComputer.set("name", "barryComputer");
+        barry.set(TestUtils.ASSETS_ATTR, ImmutableList.of(barryComputer));
+
+        Referenceable barryHardDrive = new Referenceable(TestUtils.ASSET_TYPE);
+        toVerify.add(barryHardDrive);
+        barryHardDrive.set("name", "barryHardDrive");
+
+        Referenceable barryCpuFan = new Referenceable(TestUtils.ASSET_TYPE);
+        toVerify.add(barryCpuFan);
+        barryCpuFan.set("name", "barryCpuFan");
+
+        Referenceable barryVideoCard = new Referenceable(TestUtils.ASSET_TYPE);
+        toVerify.add(barryVideoCard);
+        barryVideoCard.set("name", "barryVideoCard");
+
+        barryComputer.set("childAssets", ImmutableList.of(barryHardDrive, barryVideoCard, barryCpuFan));
+
+
+        Referenceable jacob = new Referenceable(TestUtils.PERSON_TYPE);
+        toVerify.add(jacob);
+        jacob.set(TestUtils.NAME, "jacob");
+        jacob.set(TestUtils.DEPARTMENT_ATTR, dept);
+
+        Referenceable jacobComputer = new Referenceable(TestUtils.ASSET_TYPE);
+        toVerify.add(jacobComputer);
+        jacobComputer.set("name", "jacobComputer");
+        jacob.set(TestUtils.ASSETS_ATTR, ImmutableList.of(jacobComputer));
+
+        Referenceable jacobHardDrive = new Referenceable(TestUtils.ASSET_TYPE);
+        toVerify.add(jacobHardDrive);
+        jacobHardDrive.set("name", "jacobHardDrive");
+
+        Referenceable jacobCpuFan = new Referenceable(TestUtils.ASSET_TYPE);
+        toVerify.add(jacobCpuFan);
+        jacobCpuFan.set("name", "jacobCpuFan");
+
+        Referenceable jacobVideoCard = new Referenceable(TestUtils.ASSET_TYPE);
+        toVerify.add(jacobVideoCard);
+        jacobVideoCard.set("name", "jacobVideoCard");
+
+        jacobComputer.set("childAssets", ImmutableList.of(jacobHardDrive, jacobVideoCard, jacobCpuFan));
+
+        dept.set(TestUtils.EMPLOYEES_ATTR, ImmutableList.of(barry, jacob));
+        Map<String,Referenceable> positions = new HashMap<>();
+        final String JANITOR = "janitor";
+        final String RECEPTIONIST = "receptionist";
+        positions.put(JANITOR, barry);
+        positions.put(RECEPTIONIST, jacob);
+        dept.set(TestUtils.POSITIONS_ATTR, positions);
+
+
+        ClassType deptType = TypeSystem.getInstance().getDataType(ClassType.class, TestUtils.DEPARTMENT_TYPE);
+        ITypedReferenceableInstance deptInstance = deptType.convert(dept, Multiplicity.REQUIRED);
+
+        CreateUpdateEntitiesResult result = repositoryService.createEntities(deptInstance);
+
+        assertEquals(result.getCreatedEntities().size(), toVerify.size());
+
+        validateGuidMapping(toVerify, result);
+    }
+
+    private void validateGuidMapping(List<Referenceable> toVerify, CreateUpdateEntitiesResult result)
+            throws AtlasException {
+        Map<String,String> guids = result.getGuidMapping().getGuidAssignments();
+
+        TestUtils.assertContentsSame(result.getCreatedEntities(), guids.values());
+        assertEquals(guids.size(), toVerify.size());
+        for(Referenceable r : toVerify) {
+            loadAndDoSimpleValidation(guids.get(r.getId()._getId()), r);
+        }
+    }
+
+    private ITypedReferenceableInstance loadAndDoSimpleValidation(String guid, Referenceable inst) throws AtlasException {
+        return TestUtils.loadAndDoSimpleValidation(guid, inst, repositoryService);
+    }
+
 
     @Test(dependsOnMethods = "testSubmitEntity")
     public void testGetEntityDefinitionForDepartment() throws Exception {
@@ -144,6 +386,11 @@ public class GraphBackedMetadataRepositoryTest {
 
         //entity state should be active by default
         Assert.assertEquals(entity.getId().getState(), Id.EntityState.ACTIVE);
+
+        //System attributes created time and modified time should not be null
+        AtlasSystemAttributes systemAttributes = entity.getSystemAttributes();
+        Assert.assertNotNull(systemAttributes.createdTime);
+        Assert.assertNotNull(systemAttributes.modifiedTime);
     }
 
     @Test(expectedExceptions = EntityNotFoundException.class)
@@ -169,7 +416,7 @@ public class GraphBackedMetadataRepositoryTest {
     public void testGetTraitLabel() throws Exception {
         Assert.assertEquals(
                 repositoryService.getTraitLabel(typeSystem.getDataType(ClassType.class, TestUtils.TABLE_TYPE),
-                        TestUtils.CLASSIFICATION), TestUtils.TABLE_TYPE + "." + TestUtils.CLASSIFICATION);
+                        TestUtils.CLASSIFICATION), TestUtils.CLASSIFICATION);
     }
 
     @Test
@@ -207,7 +454,7 @@ public class GraphBackedMetadataRepositoryTest {
 
     private List<String> createEntities(ITypedReferenceableInstance... instances) throws Exception {
         RequestContext.createContext();
-        return repositoryService.createEntities(instances);
+        return repositoryService.createEntities(instances).getCreatedEntities();
     }
 
     private List<String> createEntity(Referenceable entity) throws Exception {
@@ -218,9 +465,9 @@ public class GraphBackedMetadataRepositoryTest {
 
     @GraphTransaction
     String getGUID() {
-        Vertex tableVertex = getTableEntityVertex();
+        AtlasVertex tableVertex = getTableEntityVertex();
 
-        String guid = tableVertex.getProperty(Constants.GUID_PROPERTY_KEY);
+        String guid = GraphHelper.getSingleValuedProperty(tableVertex, Constants.GUID_PROPERTY_KEY, String.class);
         if (guid == null) {
             Assert.fail();
         }
@@ -228,12 +475,12 @@ public class GraphBackedMetadataRepositoryTest {
     }
 
     @GraphTransaction
-    Vertex getTableEntityVertex() {
-        TitanGraph graph = graphProvider.get();
-        GraphQuery query = graph.query().has(Constants.ENTITY_TYPE_PROPERTY_KEY, Compare.EQUAL, TestUtils.TABLE_TYPE);
-        Iterator<Vertex> results = query.vertices().iterator();
+    AtlasVertex getTableEntityVertex() {
+        AtlasGraph graph = TestUtils.getGraph();
+        AtlasGraphQuery query = graph.query().has(Constants.ENTITY_TYPE_PROPERTY_KEY, ComparisionOperator.EQUAL, TestUtils.TABLE_TYPE);
+        Iterator<AtlasVertex> results = query.vertices().iterator();
         // returning one since guid should be unique
-        Vertex tableVertex = results.hasNext() ? results.next() : null;
+        AtlasVertex tableVertex = results.hasNext() ? results.next() : null;
         if (tableVertex == null) {
             Assert.fail();
         }
@@ -293,8 +540,8 @@ public class GraphBackedMetadataRepositoryTest {
     @Test(dependsOnMethods = "testGetTraitNames")
     public void testAddTrait() throws Exception {
         final String aGUID = getGUID();
-        Vertex vertex = GraphHelper.getInstance().getVertexForGUID(aGUID);
-        Long modificationTimestampPreUpdate = vertex.getProperty(Constants.MODIFICATION_TIMESTAMP_PROPERTY_KEY);
+        AtlasVertex AtlasVertex = GraphHelper.getInstance().getVertexForGUID(aGUID);
+        Long modificationTimestampPreUpdate = GraphHelper.getSingleValuedProperty(AtlasVertex, Constants.MODIFICATION_TIMESTAMP_PROPERTY_KEY, Long.class);
         Assert.assertNotNull(modificationTimestampPreUpdate);
 
         List<String> traitNames = repositoryService.getTraitNames(aGUID);
@@ -313,10 +560,10 @@ public class GraphBackedMetadataRepositoryTest {
         Assert.assertEquals(traitNames.size(), 2);
         Assert.assertTrue(traitNames.contains(TestUtils.PII));
         Assert.assertTrue(traitNames.contains(TestUtils.CLASSIFICATION));
-        
+
         // Verify modification timestamp was updated.
         GraphHelper.getInstance().getVertexForGUID(aGUID);
-        Long modificationTimestampPostUpdate = vertex.getProperty(Constants.MODIFICATION_TIMESTAMP_PROPERTY_KEY);
+        Long modificationTimestampPostUpdate = GraphHelper.getSingleValuedProperty(AtlasVertex, Constants.MODIFICATION_TIMESTAMP_PROPERTY_KEY, Long.class);
         Assert.assertNotNull(modificationTimestampPostUpdate);
     }
 
@@ -334,7 +581,7 @@ public class GraphBackedMetadataRepositoryTest {
 
         repositoryService.addTrait(aGUID, traitInstance);
 
-        TestUtils.dumpGraph(graphProvider.get());
+        TestUtils.dumpGraph(TestUtils.getGraph());
 
         // refresh trait names
         List<String> traitNames = repositoryService.getTraitNames(aGUID);
@@ -365,8 +612,8 @@ public class GraphBackedMetadataRepositoryTest {
     @Test(dependsOnMethods = "testAddTrait")
     public void testDeleteTrait() throws Exception {
         final String aGUID = getGUID();
-        Vertex vertex = GraphHelper.getInstance().getVertexForGUID(aGUID);
-        Long modificationTimestampPreUpdate = vertex.getProperty(Constants.MODIFICATION_TIMESTAMP_PROPERTY_KEY);
+        AtlasVertex AtlasVertex = GraphHelper.getInstance().getVertexForGUID(aGUID);
+        Long modificationTimestampPreUpdate = GraphHelper.getSingleValuedProperty(AtlasVertex, Constants.MODIFICATION_TIMESTAMP_PROPERTY_KEY, Long.class);
         Assert.assertNotNull(modificationTimestampPreUpdate);
 
         List<String> traitNames = repositoryService.getTraitNames(aGUID);
@@ -382,10 +629,10 @@ public class GraphBackedMetadataRepositoryTest {
         Assert.assertEquals(traitNames.size(), 2);
         Assert.assertTrue(traitNames.contains(TestUtils.CLASSIFICATION));
         Assert.assertFalse(traitNames.contains(TestUtils.PII));
-        
+
         // Verify modification timestamp was updated.
         GraphHelper.getInstance().getVertexForGUID(aGUID);
-        Long modificationTimestampPostUpdate = vertex.getProperty(Constants.MODIFICATION_TIMESTAMP_PROPERTY_KEY);
+        Long modificationTimestampPostUpdate = GraphHelper.getSingleValuedProperty(AtlasVertex, Constants.MODIFICATION_TIMESTAMP_PROPERTY_KEY, Long.class);
         Assert.assertNotNull(modificationTimestampPostUpdate);
         Assert.assertTrue(modificationTimestampPostUpdate > modificationTimestampPreUpdate);
     }
@@ -405,20 +652,20 @@ public class GraphBackedMetadataRepositoryTest {
 
     @Test(dependsOnMethods = "testCreateEntity")
     public void testGetIdFromVertex() throws Exception {
-        Vertex tableVertex = getTableEntityVertex();
+        AtlasVertex tableVertex = getTableEntityVertex();
 
-        String guid = tableVertex.getProperty(Constants.GUID_PROPERTY_KEY);
+        String guid = GraphHelper.getSingleValuedProperty(tableVertex, Constants.GUID_PROPERTY_KEY, String.class);
         if (guid == null) {
             Assert.fail();
         }
 
-        Id expected = new Id(guid, tableVertex.<Integer>getProperty(Constants.VERSION_PROPERTY_KEY), TestUtils.TABLE_TYPE);
+        Id expected = new Id(guid, GraphHelper.getSingleValuedProperty(tableVertex, Constants.VERSION_PROPERTY_KEY, Integer.class), TestUtils.TABLE_TYPE);
         Assert.assertEquals(GraphHelper.getIdFromVertex(TestUtils.TABLE_TYPE, tableVertex), expected);
     }
 
     @Test(dependsOnMethods = "testCreateEntity")
     public void testGetTypeName() throws Exception {
-        Vertex tableVertex = getTableEntityVertex();
+        AtlasVertex tableVertex = getTableEntityVertex();
         Assert.assertEquals(GraphHelper.getTypeName(tableVertex), TestUtils.TABLE_TYPE);
     }
 
@@ -487,7 +734,7 @@ public class GraphBackedMetadataRepositoryTest {
         String dslQuery = "hive_table as t where name = 'bar' "
             + "database where name = 'foo' and description = 'foo database' select t";
 
-        TestUtils.dumpGraph(graphProvider.get());
+        TestUtils.dumpGraph(TestUtils.getGraph());
 
         System.out.println("Executing dslQuery = " + dslQuery);
         String jsonResults = discoveryService.searchByDSL(dslQuery, queryParams);
@@ -520,7 +767,7 @@ public class GraphBackedMetadataRepositoryTest {
         //but with elasticsearch, doesn't work without sleep. why??
         long sleepInterval = 1000;
 
-        TestUtils.dumpGraph(graphProvider.get());
+        TestUtils.dumpGraph(TestUtils.getGraph());
 
         //person in hr department whose name is john
         Thread.sleep(sleepInterval);
@@ -657,7 +904,7 @@ public class GraphBackedMetadataRepositoryTest {
         ClassType deptType = typeSystem.getDataType(ClassType.class, "Department");
         ITypedReferenceableInstance hrDept2 = deptType.convert(hrDept, Multiplicity.REQUIRED);
 
-        List<String> guids = repositoryService.createEntities(hrDept2);
+        List<String> guids = repositoryService.createEntities(hrDept2).getCreatedEntities();
         Assert.assertNotNull(guids);
         Assert.assertEquals(guids.size(), 2);
         Assert.assertNotNull(guids.get(0));

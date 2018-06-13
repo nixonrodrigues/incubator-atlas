@@ -21,10 +21,11 @@ define(['require',
     'hbs!tmpl/tag/TagAttributeDetailLayoutView_tmpl',
     'utils/Utils',
     'views/tag/AddTagAttributeView',
-    'collection/VCommonList',
+    'collection/VTagList',
     'models/VTag',
-    'utils/Messages'
-], function(require, Backbone, TagAttributeDetailLayoutViewTmpl, Utils, AddTagAttributeView, VCommonList, VTag, Messages) {
+    'utils/Messages',
+    'utils/UrlLinks'
+], function(require, Backbone, TagAttributeDetailLayoutViewTmpl, Utils, AddTagAttributeView, VTagList, VTag, Messages, UrlLinks) {
     'use strict';
 
     var TagAttributeDetailLayoutView = Backbone.Marionette.LayoutView.extend(
@@ -38,23 +39,19 @@ define(['require',
                 title: '[data-id="title"]',
                 editButton: '[data-id="editButton"]',
                 editBox: '[data-id="editBox"]',
-                addAttrBtn: '[data-id="addAttrBtn"]',
                 saveButton: "[data-id='saveButton']",
                 showAttribute: "[data-id='showAttribute']",
-                cancelButton: "[data-id='cancelButton']",
                 addTagListBtn: '[data-id="addTagListBtn"]',
-                addTagtext: '[data-id="addTagtext"]',
                 addTagPlus: '[data-id="addTagPlus"]',
+                addTagBtn: '[data-id="addTagBtn"]',
                 description: '[data-id="description"]',
-                descriptionTextArea: '[data-id="descriptionTextArea"]',
                 publishButton: '[data-id="publishButton"]',
+                showSuperType: "[data-id='showSuperType']"
             },
             /** ui events hash */
             events: function() {
                 var events = {};
-                events["click " + this.ui.cancelButton] = 'onCancelButtonClick';
-                events["click " + this.ui.addAttrBtn] = 'onClickAddAttribute';
-                events["click " + this.ui.addTagListBtn] = 'onClickAddTagBtn';
+                events["click " + this.ui.addTagListBtn] = 'onClickAddTagAttributeBtn';
                 events["click " + this.ui.editButton] = 'onEditButton';
                 return events;
             },
@@ -63,115 +60,213 @@ define(['require',
              * @constructs
              */
             initialize: function(options) {
-                _.extend(this, _.pick(options, 'globalVent', 'tag', 'vent'));
-                this.tagCollection = new VCommonList();
-                this.tagCollection.url = "/api/atlas/types/" + this.tag;
-                this.tagCollection.modelAttrName = "definition";
-                this.tagCollection.fetch({ reset: true });
-                this.bindEvents();
+                _.extend(this, _.pick(options, 'tag', 'collection'));
             },
             bindEvents: function() {
-                this.listenTo(this.tagCollection, 'reset', function() {
-                    var that = this,
-                        attributeData = "";
-                    _.each(this.tagCollection.models, function(attr) {
-                        var traitTypes = attr.get("traitTypes");
-                        if (traitTypes[0].typeDescription != null) {
-                            var descriptionValue = traitTypes[0].typeDescription;
-                            that.ui.description.html(descriptionValue);
+                this.listenTo(this.collection, 'reset', function() {
+                    if (!this.model) {
+                        this.model = this.collection.fullCollection.findWhere({ name: this.tag });
+                        if (this.model) {
+                            this.renderTagDetail();
+                        } else {
+                            this.$('.fontLoader').hide();
+                            Utils.notifyError({
+                                content: 'Tag Not Found'
+                            });
                         }
-                        _.each(traitTypes[0].attributeDefinitions, function(value, key) {
-                            attributeData += '<span class="inputAttribute">' + value.name + '</span>';
-                        });
-                    });
-                    if (attributeData.length) {
-                        that.ui.addTagtext.hide();
-                        that.ui.addTagPlus.show();
                     }
-                    that.ui.showAttribute.html(attributeData);
                 }, this);
                 this.listenTo(this.tagCollection, 'error', function(error, response) {
                     if (response.responseJSON && response.responseJSON.error) {
                         Utils.notifyError({
                             content: response.responseJSON.error
                         });
+                    } else {
+                        Utils.notifyError({
+                            content: 'Something went wrong'
+                        });
                     }
-
+                    this.$('.fontLoader').hide();
                 }, this);
             },
             onRender: function() {
-                this.ui.title.html('<span>' + this.tag + '</span>');
+                Utils.showTitleLoader(this.$('.page-title .fontLoader'), this.$('.tagDetail'));
+                if (this.collection.models.length && !this.model) {
+                    this.model = this.collection.fullCollection.findWhere({ name: this.tag });
+                    this.renderTagDetail();
+                }
+                this.bindEvents();
                 this.ui.saveButton.attr("disabled", "true");
                 this.ui.publishButton.prop('disabled', true);
             },
+            renderTagDetail: function() {
+                var attributeData = "",
+                    supertypeData = "",
+                    attributeDefs = this.model.get("attributeDefs"),
+                    superTypeArr = this.model.get('superTypes');
+                this.ui.title.html('<span>' + (Utils.getName(this.model.toJSON())) + '</span>');
+                if (this.model.get("description")) {
+                    this.ui.description.text(this.model.get("description"));
+                }
+                if (attributeDefs) {
+                    if (!_.isArray(attributeDefs)) {
+                        attributeDefs = [attributeDefs];
+                    }
+                    _.each(attributeDefs, function(value, key) {
+                        attributeData += '<span class="inputAttribute">' + (Utils.getName(value)) + '</span>';
+                    });
+                    this.ui.showAttribute.html(attributeData);
+                }
+                if (superTypeArr.length > 0) {
+                    this.$(".superType").show();
+                    _.each(superTypeArr, function(value, key) {
+                        supertypeData += ' <a class="inputAttribute" href="#!/tag/tagAttribute/' + value + '">' + value + '</a>';
+                    });
+                    this.ui.showSuperType.html(supertypeData);
+                }
+                Utils.hideTitleLoader(this.$('.fontLoader'), this.$('.tagDetail'));
+            },
             onSaveButton: function(saveObject, message) {
-                var that = this,
-                    tagModel = new VTag();
-                tagModel.set(saveObject).save(null, {
-                    type: "PUT",
+                var that = this;
+                var validate = true;
+
+                this.modal.$el.find(".attributeInput").each(function() {
+                    if ($(this).val() === "") {
+                        $(this).css('borderColor', "red")
+                        validate = false;
+                    }
+                });
+
+                this.modal.$el.find(".attributeInput").keyup(function() {
+                    $(this).css('borderColor', "#e8e9ee");
+                });
+                if (!validate) {
+                    Utils.notifyInfo({
+                        content: "Please fill the attributes or delete the input box"
+                    });
+                    return;
+                }
+                Utils.showTitleLoader(this.$('.page-title .fontLoader'), this.$('.tagDetail'));
+                this.model.saveTagAttribute({
+                    data: JSON.stringify({
+                        classificationDefs: [saveObject],
+                        entityDefs: [],
+                        enumDefs: [],
+                        structDefs: []
+
+                    }),
                     success: function(model, response) {
-                        that.tagCollection.fetch({ reset: true });
+                        if (model.classificationDefs) {
+                            that.model.set(model.classificationDefs[0]);
+                        }
+                        that.renderTagDetail();
                         Utils.notifySuccess({
                             content: message
                         });
                     },
-                    error: function(model, response) {
-                        if (response.responseJSON && response.responseJSON.error) {
-                            that.tagCollection.fetch({ reset: true });
-                            Utils.notifyError({
-                                content: response.responseJSON.error
-                            });
-                        }
+                    cust_error: function() {
+                        Utils.hideTitleLoader(that.$('.fontLoader'), that.$('.tagDetail'));
                     }
                 });
+                that.modal.close();
             },
-            onClickAddTagBtn: function(e) {
+            onClickAddTagAttributeBtn: function(e) {
                 var that = this;
                 require(['views/tag/AddTagAttributeView',
                         'modules/Modal'
                     ],
                     function(AddTagAttributeView, Modal) {
-                        var view = new AddTagAttributeView(),
-                            modal = new Modal({
-                                title: 'Add Attribute',
-                                content: view,
-                                cancelText: "Cancel",
-                                okText: 'Add',
-                                allowCancel: true,
-                            }).open();
-                        modal.on('ok', function() {
-                            var attributeName = $(view.el).find("input").val();
-                            that.tagCollection.first().get('traitTypes')[0].attributeDefinitions.push({
-                                "name": attributeName,
-                                "dataTypeName": "string",
-                                "multiplicity": "optional",
-                                "isComposite": false,
-                                "isUniquvar e": false,
-                                "isIndexable": true,
-                                "reverseAttributeName": null
-                            });
-                            that.onSaveButton(that.tagCollection.first().toJSON(), Messages.addAttributeSuccessMessage);
+                        var view = new AddTagAttributeView();
+                        that.modal = new Modal({
+                            title: 'Add Attribute',
+                            content: view,
+                            cancelText: "Cancel",
+                            okText: 'Add',
+                            allowCancel: true,
+                            okCloses: false
+                        }).open();
+                        that.modal.$el.find('button.ok').attr("disabled", "true");
+                        view.ui.addAttributeDiv.on('keyup', '.attributeInput', function(e) {
+                            if (e.target.value.trim() == "") {
+                                that.modal.$el.find('button.ok').attr("disabled", "disabled");
+                            } else {
+                                that.modal.$el.find('button.ok').removeAttr("disabled");
+                            }
                         });
-                        modal.on('closeModal', function() {
-                            modal.trigger('cancel');
+                        that.modal.on('ok', function() {
+                            var newAttributeList = view.collection.toJSON(),
+                                activeTagAttribute = _.extend([], that.model.get('attributeDefs')),
+                                superTypes = that.model.get('superTypes');
+
+                            _.each(superTypes, function(name) {
+                                var parentTags = that.collection.fullCollection.findWhere({ name: name });
+                                activeTagAttribute = activeTagAttribute.concat(parentTags.get('attributeDefs'));
+                            });
+
+                            var duplicateAttributeList = [],
+                                saveObj = $.extend(true, {}, that.model.toJSON());
+                            _.each(newAttributeList, function(obj) {
+                                var duplicateCheck = _.find(activeTagAttribute, function(activeTagObj) {
+                                    return activeTagObj.name.toLowerCase() === obj.name.toLowerCase();
+                                });
+                                if (duplicateCheck) {
+                                    duplicateAttributeList.push(obj.name);
+                                } else {
+                                    saveObj.attributeDefs.push(obj);
+                                }
+                            });
+                            var notifyObj = {
+                                modal: true,
+                                confirm: {
+                                    confirm: true,
+                                    buttons: [{
+                                            text: 'Ok',
+                                            addClass: 'btn-primary',
+                                            click: function(notice) {
+                                                notice.remove();
+                                            }
+                                        },
+                                        null
+                                    ]
+                                }
+                            }
+                            if (saveObj && !duplicateAttributeList.length) {
+                                that.onSaveButton(saveObj, Messages.addAttributeSuccessMessage);
+                            } else {
+                                if (duplicateAttributeList.length < 2) {
+                                    var text = "Attribute <b>" + duplicateAttributeList.join(",") + "</b> is duplicate !"
+                                } else {
+                                    if (newAttributeList.length > duplicateAttributeList.length) {
+                                        var text = "Attributes: <b>" + duplicateAttributeList.join(",") + "</b> are duplicate ! Do you want to continue with other attributes ?"
+                                        notifyObj = {
+                                            ok: function(argument) {
+                                                that.onSaveButton(saveObj, Messages.addAttributeSuccessMessage);
+                                            },
+                                            cancel: function(argument) {}
+                                        }
+                                    } else {
+                                        var text = "All attributes are duplicate !"
+                                    }
+                                }
+                                notifyObj['text'] = text;
+                                Utils.notifyConfirm(notifyObj);
+                            }
+                        });
+                        that.modal.on('closeModal', function() {
+                            that.modal.trigger('cancel');
                         });
                     });
             },
-            onCancelButtonClick: function() {
-                this.ui.description.show();
-                this.ui.editButton.show();
-                this.ui.editBox.hide();
-            },
-            textAreaChangeEvent: function(view, modal) {
-                if (view.tagCollection.first().get('traitTypes')[0].typeDescription == view.ui.description.val()) {
-                    modal.$el.find('button.ok').prop('disabled', true);
+            textAreaChangeEvent: function(view) {
+                if (this.model.get('description') === view.ui.description.val()) {
+                    this.modal.$el.find('button.ok').prop('disabled', true);
                 } else {
-                    modal.$el.find('button.ok').prop('disabled', false);
+                    this.modal.$el.find('button.ok').prop('disabled', false);
                 }
             },
             onPublishClick: function(view) {
-                view.tagCollection.first().get('traitTypes')[0].typeDescription = view.ui.description.val();
-                this.onSaveButton(this.tagCollection.first().toJSON(), Messages.updateTagDescriptionMessage);
+                var saveObj = _.extend(this.model.toJSON(), { 'description': view.ui.description.val() });
+                this.onSaveButton(saveObj, Messages.updateTagDescriptionMessage);
                 this.ui.description.show();
             },
             onEditButton: function(e) {
@@ -181,8 +276,8 @@ define(['require',
                     'views/tag/CreateTagLayoutView',
                     'modules/Modal'
                 ], function(CreateTagLayoutView, Modal) {
-                    var view = new CreateTagLayoutView({ 'tagCollection': that.tagCollection, 'tag': that.tag });
-                    var modal = new Modal({
+                    var view = new CreateTagLayoutView({ 'tagCollection': that.collection, 'model': that.model, 'tag': that.tag });
+                    that.modal = new Modal({
                         title: 'Edit Tag',
                         content: view,
                         cancelText: "Cancel",
@@ -190,14 +285,14 @@ define(['require',
                         allowCancel: true,
                     }).open();
                     view.ui.description.on('keyup', function(e) {
-                        that.textAreaChangeEvent(view, modal);
+                        that.textAreaChangeEvent(view);
                     });
-                    modal.$el.find('button.ok').prop('disabled', true);
-                    modal.on('ok', function() {
+                    that.modal.$el.find('button.ok').prop('disabled', true);
+                    that.modal.on('ok', function() {
                         that.onPublishClick(view);
                     });
-                    modal.on('closeModal', function() {
-                        modal.trigger('cancel');
+                    that.modal.on('closeModal', function() {
+                        that.modal.trigger('cancel');
                     });
                 });
             }

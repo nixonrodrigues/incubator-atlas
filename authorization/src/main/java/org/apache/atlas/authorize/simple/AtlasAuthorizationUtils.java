@@ -1,4 +1,5 @@
 /**
+/**
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -18,14 +19,21 @@
 
 package org.apache.atlas.authorize.simple;
 
-import java.util.HashSet;
-import java.util.Set;
-
+import javax.servlet.http.HttpServletRequest;
 import org.apache.atlas.AtlasClient;
 import org.apache.atlas.authorize.AtlasActionTypes;
 import org.apache.atlas.authorize.AtlasResourceTypes;
+import org.apache.atlas.authorize.AtlasAuthorizationException;
+import org.apache.atlas.authorize.AtlasAuthorizer;
+import org.apache.atlas.authorize.AtlasAccessRequest;
+import org.apache.atlas.authorize.AtlasAuthorizerFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.regex.Pattern;
 
 public class AtlasAuthorizationUtils {
     private static final Logger LOG = LoggerFactory.getLogger(AtlasAuthorizationUtils.class);
@@ -34,8 +42,13 @@ public class AtlasAuthorizationUtils {
 
     public static String getApi(String contextPath) {
         if (isDebugEnabled) {
-            LOG.debug("==> getApi from " + contextPath);
+            LOG.debug("==> getApi({})", contextPath);
         }
+
+        if(contextPath == null){
+            contextPath = "";
+        }
+
         if (contextPath.startsWith(BASE_URL)) {
             contextPath = contextPath.substring(BASE_URL.length());
         } else {
@@ -45,12 +58,17 @@ public class AtlasAuthorizationUtils {
             }
         }
         String[] split = contextPath.split("/", 3);
+
         String api = split[0];
-        if (split.length > 1) {
-            return (!api.equals("v1")) ? api : String.format("v1/%s", split[1]);
-        } else {
-            return api;
+        if (Pattern.matches("v\\d", api)) {
+            api = split[1];
         }
+
+        if (isDebugEnabled) {
+            LOG.debug("<== getApi({}): {}", contextPath, api);
+        }
+
+        return api;
     }
 
     public static AtlasActionTypes getAtlasAction(String method) {
@@ -71,14 +89,14 @@ public class AtlasAuthorizationUtils {
                 break;
             default:
                 if (isDebugEnabled) {
-                    LOG.debug("getAtlasAction(): Invalid HTTP method '" + method + "'");
+                    LOG.debug("getAtlasAction(): Invalid HTTP method '{}", method);
                 }
                 break;
         }
 
         if (isDebugEnabled) {
-            LOG.debug("<== AtlasAuthorizationFilter getAtlasAction HTTP Method " + method + " mapped to AtlasAction : "
-                + action);
+            LOG.debug("<== AtlasAuthorizationFilter getAtlasAction HTTP Method {} mapped to AtlasAction : {}",
+                    method, action);
         }
         return action;
     }
@@ -87,18 +105,21 @@ public class AtlasAuthorizationUtils {
      * @param contextPath
      * @return set of AtlasResourceTypes types api mapped with AtlasResourceTypes.TYPE eg :- /api/atlas/types/*
      *
-     *         gremlin discovery,admin,graph apis are mapped with AtlasResourceTypes.OPERATION eg :-/api/atlas/admin/*
-     *         /api/atlas/discovery/search/gremlin /api/atlas/graph/*
+     * gremlin discovery,admin,graph apis are mapped with AtlasResourceTypes.OPERATION eg :-/api/atlas/admin/*
+     * /api/atlas/discovery/search/gremlin /api/atlas/graph/*
      *
-     *         entities,lineage and discovery apis are mapped with AtlasResourceTypes.ENTITY eg :- /api/atlas/lineage/hive/table/*
-     *         /api/atlas/entities/{guid}* /api/atlas/discovery/*
-     * 
-     *         unprotected types are mapped with AtlasResourceTypes.UNKNOWN, access to these are allowed.
+     * entities,lineage and discovery apis are mapped with AtlasResourceTypes.ENTITY eg :- /api/atlas/lineage/hive/table/*
+     * /api/atlas/entities/{guid}* /api/atlas/discovery/*
+     *
+     * taxonomy API are also mapped to AtlasResourceTypes.TAXONOMY & AtlasResourceTypes.ENTITY and its terms APIs have
+     * added AtlasResourceTypes.TERM associations.
+     *
+     * unprotected types are mapped with AtlasResourceTypes.UNKNOWN, access to these are allowed.
      */
     public static Set<AtlasResourceTypes> getAtlasResourceType(String contextPath) {
-        Set<AtlasResourceTypes> resourceTypes = new HashSet<AtlasResourceTypes>();
+        Set<AtlasResourceTypes> resourceTypes = new HashSet<>();
         if (isDebugEnabled) {
-            LOG.debug("==> getAtlasResourceType  for " + contextPath);
+            LOG.debug("==> getAtlasResourceType  for {}", contextPath);
         }
         String api = getApi(contextPath);
         if (api.startsWith("types")) {
@@ -106,28 +127,61 @@ public class AtlasAuthorizationUtils {
         } else if (api.startsWith("admin") && (contextPath.contains("/session") || contextPath.contains("/version"))) {
             resourceTypes.add(AtlasResourceTypes.UNKNOWN);
         } else if ((api.startsWith("discovery") && contextPath.contains("/gremlin")) || api.startsWith("admin")
-            || api.startsWith("graph")) {
+                || api.startsWith("graph")) {
             resourceTypes.add(AtlasResourceTypes.OPERATION);
-        } else if (api.startsWith("entities") || api.startsWith("lineage") || api.startsWith("discovery")) {
+        } else if (api.startsWith("entities") || api.startsWith("lineage") ||
+                api.startsWith("discovery") || api.startsWith("entity") || api.startsWith("search")) {
             resourceTypes.add(AtlasResourceTypes.ENTITY);
-        } else if (api.startsWith("v1/taxonomies")) {
+        } else if (api.startsWith("taxonomies")) {
             resourceTypes.add(AtlasResourceTypes.TAXONOMY);
             // taxonomies are modeled as entities
             resourceTypes.add(AtlasResourceTypes.ENTITY);
             if (contextPath.contains("/terms")) {
                 resourceTypes.add(AtlasResourceTypes.TERM);
             }
-        } else if (api.startsWith("v1/entities")) {
-            resourceTypes.add(AtlasResourceTypes.ENTITY);
+        } else if (api.startsWith("relationship")) {
+            resourceTypes.add(AtlasResourceTypes.RELATIONSHIP);
         } else {
-            LOG.error("Unable to find Atlas Resource corresponding to : " + api + "\nSetting "
-                + AtlasResourceTypes.UNKNOWN.name());
+            LOG.error("Unable to find Atlas Resource corresponding to : {}\nSetting {}"
+                    , api, AtlasResourceTypes.UNKNOWN.name());
             resourceTypes.add(AtlasResourceTypes.UNKNOWN);
         }
 
         if (isDebugEnabled) {
-            LOG.debug("<== Returning AtlasResources " + resourceTypes + " for api " + api);
+            LOG.debug("<== Returning AtlasResources {} for api {}", resourceTypes, api);
         }
         return resourceTypes;
+    }
+
+    public static boolean isAccessAllowed(AtlasResourceTypes resourcetype, AtlasActionTypes actionType, String userName, Set<String> groups, HttpServletRequest request) {
+        AtlasAuthorizer authorizer = null;
+        boolean isaccessAllowed = false;
+
+        Set<AtlasResourceTypes> resourceTypes = new HashSet<>();
+        resourceTypes.add(resourcetype);
+        AtlasAccessRequest atlasRequest = new AtlasAccessRequest(resourceTypes, "*", actionType, userName, groups, AtlasAuthorizationUtils.getRequestIpAddress(request));
+        try {
+            authorizer = AtlasAuthorizerFactory.getAtlasAuthorizer();
+            if (authorizer != null) {
+                isaccessAllowed = authorizer.isAccessAllowed(atlasRequest);
+            }
+        } catch (AtlasAuthorizationException e) {
+            LOG.error("Unable to obtain AtlasAuthorizer. ", e);
+        }
+
+        return isaccessAllowed;
+    }
+
+    public static String getRequestIpAddress(HttpServletRequest httpServletRequest) {
+        try {
+            InetAddress inetAddr = InetAddress.getByName(httpServletRequest.getRemoteAddr());
+
+            String ip = inetAddr.getHostAddress();
+
+            return ip;
+        } catch (UnknownHostException ex) {
+            LOG.error("Error occured when retrieving IP address", ex);
+            return "";
+        }
     }
 }

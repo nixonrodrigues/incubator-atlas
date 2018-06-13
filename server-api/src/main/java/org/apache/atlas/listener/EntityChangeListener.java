@@ -28,50 +28,62 @@ import java.util.Collection;
  * Entity (a Typed instance) change notification listener.
  */
 public interface EntityChangeListener {
-
     /**
      * This is upon adding new entities to the repository.
      *
      * @param entities  the created entities
      *
+     * @param isImport
      * @throws AtlasException if the listener notification fails
      */
-    void onEntitiesAdded(Collection<ITypedReferenceableInstance> entities) throws AtlasException;
+    void onEntitiesAdded(Collection<ITypedReferenceableInstance> entities, boolean isImport) throws AtlasException;
 
     /**
      * This is upon updating an entity.
      *
      * @param entities        the updated entities
      *
+     * @param isImport
      * @throws AtlasException if the listener notification fails
      */
-    void onEntitiesUpdated(Collection<ITypedReferenceableInstance> entities) throws AtlasException;
+    void onEntitiesUpdated(Collection<ITypedReferenceableInstance> entities, boolean isImport) throws AtlasException;
 
     /**
      * This is upon adding a new trait to a typed instance.
      *
      * @param entity        the entity
-     * @param trait     trait that needs to be added to entity
+     * @param traits    trait that needs to be added to entity
      *
      * @throws AtlasException if the listener notification fails
      */
-    void onTraitAdded(ITypedReferenceableInstance entity, IStruct trait) throws AtlasException;
+    void onTraitsAdded(ITypedReferenceableInstance entity, Collection<? extends IStruct> traits) throws AtlasException;
 
     /**
      * This is upon deleting a trait from a typed instance.
      *
      * @param entity        the entity
-     * @param traitName     trait name for the instance that needs to be deleted from entity
+     * @param traitNames    trait name for the instance that needs to be deleted from entity
      *
      * @throws AtlasException if the listener notification fails
      */
-    void onTraitDeleted(ITypedReferenceableInstance entity, String traitName) throws AtlasException;
+    void onTraitsDeleted(ITypedReferenceableInstance entity, Collection<String> traitNames) throws AtlasException;
+
+    /**
+     * This is upon updating a trait from a typed instance.
+     *
+     * @param entity    the entity
+     * @param traits    trait that needs to be added to entity
+     *
+     * @throws AtlasException if the listener notification fails
+     */
+    void onTraitsUpdated(ITypedReferenceableInstance entity, Collection<? extends IStruct> traits) throws AtlasException;
     
     /**
      * This is upon deleting entities from the repository.
      *
      * @param entities the deleted entities
+     * @param isImport
      * @throws AtlasException
      */
-    void onEntitiesDeleted(Collection<ITypedReferenceableInstance> entities) throws AtlasException;
+    void onEntitiesDeleted(Collection<ITypedReferenceableInstance> entities, boolean isImport) throws AtlasException;
 }

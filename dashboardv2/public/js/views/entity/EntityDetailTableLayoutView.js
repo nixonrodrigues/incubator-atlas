@@ -19,8 +19,10 @@
 define(['require',
     'backbone',
     'hbs!tmpl/entity/EntityDetailTableLayoutView_tmpl',
-    'utils/CommonViewFunction'
-], function(require, Backbone, EntityDetailTableLayoutView_tmpl, CommonViewFunction) {
+    'utils/CommonViewFunction',
+    'models/VEntity',
+    'utils/Utils'
+], function(require, Backbone, EntityDetailTableLayoutView_tmpl, CommonViewFunction, VEntity, Utils) {
     'use strict';
 
     var EntityDetailTableLayoutView = Backbone.Marionette.LayoutView.extend(
@@ -47,9 +49,8 @@ define(['require',
              * @constructs
              */
             initialize: function(options) {
-                _.extend(this, _.pick(options, 'globalVent', 'collection'));
-                this.collectionObject = this.collection.toJSON();
-                this.entityModel = new this.collection.model();
+                _.extend(this, _.pick(options, 'entity', 'referredEntities', 'typeHeaders', 'attributeDefs'));
+                this.entityModel = new VEntity({});
             },
             bindEvents: function() {},
             onRender: function() {
@@ -57,8 +58,15 @@ define(['require',
             },
             entityTableGenerate: function() {
                 var that = this,
-                    valueObject = this.collectionObject[0].values,
-                    table = CommonViewFunction.propertyTable(valueObject, this);
+                    attributeObject = this.entity.attributes;
+                Utils.findAndMergeRefEntity(attributeObject, that.referredEntities);
+                if (attributeObject && attributeObject.columns) {
+                    var valueSorted = _.sortBy(attributeObject.columns, function(val) {
+                        return val.attributes.position
+                    });
+                    attributeObject.columns = valueSorted;
+                }
+                var table = CommonViewFunction.propertyTable({ scope: this, valueObject: attributeObject, attributeDefs: this.attributeDefs });
                 that.ui.detailValue.append(table);
             }
         });

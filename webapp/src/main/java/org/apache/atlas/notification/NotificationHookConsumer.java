@@ -19,38 +19,76 @@ package org.apache.atlas.notification;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
-import com.google.inject.Inject;
-import com.google.inject.Singleton;
-import kafka.consumer.ConsumerTimeoutException;
+import kafka.utils.ShutdownableThread;
 import org.apache.atlas.ApplicationProperties;
 import org.apache.atlas.AtlasException;
-import org.apache.atlas.LocalAtlasClient;
+import org.apache.atlas.AtlasServiceException;
+import org.apache.atlas.RequestContext;
+import org.apache.atlas.RequestContextV1;
 import org.apache.atlas.ha.HAConfiguration;
+import org.apache.atlas.kafka.AtlasKafkaMessage;
 import org.apache.atlas.listener.ActiveStateChangeHandler;
-import org.apache.atlas.notification.hook.HookNotification;
+import org.apache.atlas.model.instance.AtlasEntity;
+import org.apache.atlas.notification.hook.HookNotification.EntityCreateRequest;
+import org.apache.atlas.notification.hook.HookNotification.EntityDeleteRequest;
+import org.apache.atlas.notification.hook.HookNotification.EntityPartialUpdateRequest;
+import org.apache.atlas.notification.hook.HookNotification.EntityUpdateRequest;
+import org.apache.atlas.notification.hook.HookNotification.HookNotificationMessage;
+import org.apache.atlas.repository.converters.AtlasInstanceConverter;
+import org.apache.atlas.repository.store.graph.AtlasEntityStore;
+import org.apache.atlas.repository.store.graph.v1.AtlasEntityStream;
+import org.apache.atlas.repository.store.graph.v1.AtlasGraphUtilsV1;
 import org.apache.atlas.service.Service;
+import org.apache.atlas.type.AtlasEntityType;
+import org.apache.atlas.type.AtlasTypeRegistry;
+import org.apache.atlas.typesystem.Referenceable;
+import org.apache.atlas.web.filters.AuditFilter;
+import org.apache.atlas.web.service.ServiceState;
+import org.apache.atlas.web.util.DateTimeHelper;
 import org.apache.commons.configuration.Configuration;
+import org.apache.kafka.common.TopicPartition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.core.annotation.Order;
+import org.springframework.stereotype.Component;
 
+import javax.inject.Inject;
 import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import static org.apache.atlas.AtlasClientV2.*;
+
 /**
  * Consumer of notifications from hooks e.g., hive hook etc.
  */
-@Singleton
+@Component
+@Order(4)
 public class NotificationHookConsumer implements Service, ActiveStateChangeHandler {
     private static final Logger LOG = LoggerFactory.getLogger(NotificationHookConsumer.class);
+    private static final String LOCALHOST = "localhost";
+    private static Logger FAILED_LOG = LoggerFactory.getLogger("FAILED");
+
     private static final String THREADNAME_PREFIX = NotificationHookConsumer.class.getSimpleName();
 
     public static final String CONSUMER_THREADS_PROPERTY = "atlas.notification.hook.numthreads";
+    public static final String CONSUMER_RETRIES_PROPERTY = "atlas.notification.hook.maxretries";
+    public static final String CONSUMER_FAILEDCACHESIZE_PROPERTY = "atlas.notification.hook.failedcachesize";
+    public static final String CONSUMER_RETRY_INTERVAL = "atlas.notification.consumer.retry.interval";
+
     public static final int SERVER_READY_WAIT_TIME_MS = 1000;
-    private final LocalAtlasClient atlasClient;
+    private final AtlasEntityStore atlasEntityStore;
+    private final ServiceState serviceState;
+    private final AtlasInstanceConverter instanceConverter;
+    private final AtlasTypeRegistry typeRegistry;
+    private final int maxRetries;
+    private final int failedMsgCacheSize;
+    private final int consumerRetryInterval;
 
     private NotificationInterface notificationInterface;
     private ExecutorService executors;
@@ -58,20 +96,29 @@ public class NotificationHookConsumer implements Service, ActiveStateChangeHandl
     private List<HookConsumer> consumers;
 
     @Inject
-    public NotificationHookConsumer(NotificationInterface notificationInterface, LocalAtlasClient atlasClient) {
+    public NotificationHookConsumer(NotificationInterface notificationInterface, AtlasEntityStore atlasEntityStore,
+                                    ServiceState serviceState, AtlasInstanceConverter instanceConverter,
+                                    AtlasTypeRegistry typeRegistry) throws AtlasException {
         this.notificationInterface = notificationInterface;
-        this.atlasClient = atlasClient;
+        this.atlasEntityStore = atlasEntityStore;
+        this.serviceState = serviceState;
+        this.instanceConverter = instanceConverter;
+        this.typeRegistry = typeRegistry;
+
+        this.applicationProperties = ApplicationProperties.get();
+
+        maxRetries = applicationProperties.getInt(CONSUMER_RETRIES_PROPERTY, 3);
+        failedMsgCacheSize = applicationProperties.getInt(CONSUMER_FAILEDCACHESIZE_PROPERTY, 20);
+        consumerRetryInterval = applicationProperties.getInt(CONSUMER_RETRY_INTERVAL, 500);
+
     }
 
     @Override
     public void start() throws AtlasException {
-        Configuration configuration = ApplicationProperties.get();
-        startInternal(configuration, null);
+        startInternal(applicationProperties, null);
     }
 
-    void startInternal(Configuration configuration,
-                       ExecutorService executorService) {
-        this.applicationProperties = configuration;
+    void startInternal(Configuration configuration, ExecutorService executorService) {
         if (consumers == null) {
             consumers = new ArrayList<>();
         }
@@ -86,14 +133,14 @@ public class NotificationHookConsumer implements Service, ActiveStateChangeHandl
 
     private void startConsumers(ExecutorService executorService) {
         int numThreads = applicationProperties.getInt(CONSUMER_THREADS_PROPERTY, 1);
-        List<NotificationConsumer<HookNotification.HookNotificationMessage>> notificationConsumers =
+        List<NotificationConsumer<HookNotificationMessage>> notificationConsumers =
                 notificationInterface.createConsumers(NotificationInterface.NotificationType.HOOK, numThreads);
         if (executorService == null) {
             executorService = Executors.newFixedThreadPool(notificationConsumers.size(),
                     new ThreadFactoryBuilder().setNameFormat(THREADNAME_PREFIX + " thread-%d").build());
         }
         executors = executorService;
-        for (final NotificationConsumer<HookNotification.HookNotificationMessage> consumer : notificationConsumers) {
+        for (final NotificationConsumer<HookNotificationMessage> consumer : notificationConsumers) {
             HookConsumer hookConsumer = new HookConsumer(consumer);
             consumers.add(hookConsumer);
             executors.submit(hookConsumer);
@@ -103,16 +150,16 @@ public class NotificationHookConsumer implements Service, ActiveStateChangeHandl
     @Override
     public void stop() {
         //Allow for completion of outstanding work
-        notificationInterface.close();
         try {
+            stopConsumerThreads();
             if (executors != null) {
-                stopConsumerThreads();
-                executors.shutdownNow();
+                executors.shutdown();
                 if (!executors.awaitTermination(5000, TimeUnit.MILLISECONDS)) {
                     LOG.error("Timed out waiting for consumer threads to shut down, exiting uncleanly");
                 }
                 executors = null;
             }
+            notificationInterface.close();
         } catch (InterruptedException e) {
             LOG.error("Failure in shutting down consumers");
         }
@@ -129,7 +176,7 @@ public class NotificationHookConsumer implements Service, ActiveStateChangeHandl
 
     /**
      * Start Kafka consumer threads that read from Kafka topic when server is activated.
-     *
+     * <p>
      * Since the consumers create / update entities to the shared backend store, only the active instance
      * should perform this activity. Hence, these threads are started only on server activation.
      */
@@ -141,7 +188,7 @@ public class NotificationHookConsumer implements Service, ActiveStateChangeHandl
 
     /**
      * Stop Kafka consumer threads that read from Kafka topic when server is de-activated.
-     *
+     * <p>
      * Since the consumers create / update entities to the shared backend store, only the active instance
      * should perform this activity. Hence, these threads are stopped only on server deactivation.
      */
@@ -157,24 +204,18 @@ public class NotificationHookConsumer implements Service, ActiveStateChangeHandl
         }
     }
 
-    class HookConsumer implements Runnable {
-        private final NotificationConsumer<HookNotification.HookNotificationMessage> consumer;
+    class HookConsumer extends ShutdownableThread {
+        private final NotificationConsumer<HookNotificationMessage> consumer;
         private final AtomicBoolean shouldRun = new AtomicBoolean(false);
+        private List<HookNotificationMessage> failedMessages = new ArrayList<>();
 
-        public HookConsumer(NotificationConsumer<HookNotification.HookNotificationMessage> consumer) {
+        public HookConsumer(NotificationConsumer<HookNotificationMessage> consumer) {
+            super("atlas-hook-consumer-thread", false);
             this.consumer = consumer;
         }
 
-        private boolean hasNext() {
-            try {
-                return consumer.hasNext();
-            } catch (ConsumerTimeoutException e) {
-                return false;
-            }
-        }
-
         @Override
-        public void run() {
+        public void doWork() {
             shouldRun.set(true);
 
             if (!serverAvailable(new NotificationHookConsumer.Timer())) {
@@ -183,8 +224,9 @@ public class NotificationHookConsumer implements Service, ActiveStateChangeHandl
 
             while (shouldRun.get()) {
                 try {
-                    if (hasNext()) {
-                        handleMessage(consumer.next());
+                    List<AtlasKafkaMessage<HookNotificationMessage>> messages = consumer.receive();
+                    for (AtlasKafkaMessage<HookNotificationMessage> msg : messages) {
+                        handleMessage(msg);
                     }
                 } catch (Throwable t) {
                     LOG.warn("Failure in NotificationHookConsumer", t);
@@ -193,51 +235,133 @@ public class NotificationHookConsumer implements Service, ActiveStateChangeHandl
         }
 
         @VisibleForTesting
-        void handleMessage(HookNotification.HookNotificationMessage message) {
-            atlasClient.setUser(message.getUser());
-            try {
-                switch (message.getType()) {
-                case ENTITY_CREATE:
-                    HookNotification.EntityCreateRequest createRequest =
-                            (HookNotification.EntityCreateRequest) message;
-                    atlasClient.createEntity(createRequest.getEntities());
-                    break;
-
-                case ENTITY_PARTIAL_UPDATE:
-                    HookNotification.EntityPartialUpdateRequest partialUpdateRequest =
-                            (HookNotification.EntityPartialUpdateRequest) message;
-                    atlasClient.updateEntity(partialUpdateRequest.getTypeName(),
-                            partialUpdateRequest.getAttribute(),
-                            partialUpdateRequest.getAttributeValue(), partialUpdateRequest.getEntity());
-                    break;
-
-                case ENTITY_DELETE:
-                    HookNotification.EntityDeleteRequest deleteRequest =
-                        (HookNotification.EntityDeleteRequest) message;
-                    atlasClient.deleteEntity(deleteRequest.getTypeName(),
-                        deleteRequest.getAttribute(),
-                        deleteRequest.getAttributeValue());
-                    break;
-
-                case ENTITY_FULL_UPDATE:
-                    HookNotification.EntityUpdateRequest updateRequest =
-                            (HookNotification.EntityUpdateRequest) message;
-                    atlasClient.updateEntities(updateRequest.getEntities());
-                    break;
-
-                default:
-                    throw new IllegalStateException("Unhandled exception!");
+        void handleMessage(AtlasKafkaMessage<HookNotificationMessage> kafkaMsg) throws AtlasServiceException, AtlasException {
+            HookNotificationMessage message = kafkaMsg.getMessage();
+            String messageUser = message.getUser();
+            // Used for intermediate conversions during create and update
+            AtlasEntity.AtlasEntitiesWithExtInfo entities;
+            for (int numRetries = 0; numRetries < maxRetries; numRetries++) {
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("handleMessage({}): attempt {}", message.getType().name(), numRetries);
                 }
-            } catch (Exception e) {
-                //todo handle failures
-                LOG.warn("Error handling message {}", message, e);
+                try {
+                    RequestContext requestContext = RequestContext.createContext();
+                    requestContext.setUser(messageUser);
+
+                    switch (message.getType()) {
+                        case ENTITY_CREATE:
+                            EntityCreateRequest createRequest = (EntityCreateRequest) message;
+
+                            if (numRetries == 0) { // audit only on the first attempt
+                                audit(messageUser, CREATE_ENTITY.getMethod(), CREATE_ENTITY.getPath());
+                            }
+
+                            entities = instanceConverter.toAtlasEntities(createRequest.getEntities());
+
+                            atlasEntityStore.createOrUpdate(new AtlasEntityStream(entities), false);
+                            break;
+
+                        case ENTITY_PARTIAL_UPDATE:
+                            final EntityPartialUpdateRequest partialUpdateRequest = (EntityPartialUpdateRequest) message;
+
+                            if (numRetries == 0) { // audit only on the first attempt
+                                audit(messageUser, UPDATE_ENTITY_BY_ATTRIBUTE.getMethod(),
+                                        String.format(UPDATE_ENTITY_BY_ATTRIBUTE.getPath(), partialUpdateRequest.getTypeName()));
+                            }
+
+                            Referenceable referenceable = partialUpdateRequest.getEntity();
+                            entities = instanceConverter.toAtlasEntity(referenceable);
+
+                            AtlasEntityType entityType = typeRegistry.getEntityTypeByName(partialUpdateRequest.getTypeName());
+                            String guid = AtlasGraphUtilsV1.getGuidByUniqueAttributes(entityType, new HashMap<String, Object>() {
+                                {
+                                    put(partialUpdateRequest.getAttribute(), partialUpdateRequest.getAttributeValue());
+                                }
+                            });
+
+                            // There should only be one root entity
+                            entities.getEntities().get(0).setGuid(guid);
+
+                            atlasEntityStore.createOrUpdate(new AtlasEntityStream(entities), true);
+                            break;
+
+                        case ENTITY_DELETE:
+                            final EntityDeleteRequest deleteRequest = (EntityDeleteRequest) message;
+
+                            if (numRetries == 0) { // audit only on the first attempt
+                                audit(messageUser, DELETE_ENTITY_BY_ATTRIBUTE.getMethod(),
+                                        String.format(DELETE_ENTITY_BY_ATTRIBUTE.getPath(), deleteRequest.getTypeName()));
+                            }
+
+                            try {
+                                AtlasEntityType type = (AtlasEntityType) typeRegistry.getType(deleteRequest.getTypeName());
+                                atlasEntityStore.deleteByUniqueAttributes(type,
+                                        new HashMap<String, Object>() {{
+                                            put(deleteRequest.getAttribute(), deleteRequest.getAttributeValue());
+                                        }});
+                            } catch (ClassCastException cle) {
+                                LOG.error("Failed to do a partial update on Entity");
+                            }
+                            break;
+
+                        case ENTITY_FULL_UPDATE:
+                            EntityUpdateRequest updateRequest = (EntityUpdateRequest) message;
+
+                            if (numRetries == 0) { // audit only on the first attempt
+                                audit(messageUser, UPDATE_ENTITY.getMethod(), UPDATE_ENTITY.getPath());
+                            }
+
+                            entities = instanceConverter.toAtlasEntities(updateRequest.getEntities());
+                            atlasEntityStore.createOrUpdate(new AtlasEntityStream(entities), false);
+                            break;
+
+                        default:
+                            throw new IllegalStateException("Unknown notification type: " + message.getType().name());
+                    }
+
+                    break;
+                } catch (Throwable e) {
+                    LOG.warn("Error handling message", e);
+                    try {
+                        LOG.info("Sleeping for {} ms before retry", consumerRetryInterval);
+                        Thread.sleep(consumerRetryInterval);
+                    } catch (InterruptedException ie) {
+                        LOG.error("Notification consumer thread sleep interrupted");
+                    }
+
+                    if (numRetries == (maxRetries - 1)) {
+                        LOG.warn("Max retries exceeded for message {}", message, e);
+                        failedMessages.add(message);
+                        if (failedMessages.size() >= failedMsgCacheSize) {
+                            recordFailedMessages();
+                        }
+                        return;
+                    }
+                } finally {
+                    RequestContext.clear();
+                    RequestContextV1.clear();
+                }
             }
-            consumer.commit();
+            commit(kafkaMsg);
+        }
+
+        private void recordFailedMessages() {
+            //logging failed messages
+            for (HookNotificationMessage message : failedMessages) {
+                FAILED_LOG.error("[DROPPED_NOTIFICATION] {}", AbstractNotification.getMessageJson(message));
+            }
+            failedMessages.clear();
+        }
+
+        private void commit(AtlasKafkaMessage<HookNotificationMessage> kafkaMessage) {
+            recordFailedMessages();
+            TopicPartition partition = new TopicPartition("ATLAS_HOOK", kafkaMessage.getPartition());
+            consumer.commit(partition, kafkaMessage.getOffset());
         }
 
         boolean serverAvailable(Timer timer) {
             try {
-                while (!atlasClient.isServerReady()) {
+                while (serviceState.getState() != ServiceState.ServiceStateValue.ACTIVE) {
                     try {
                         LOG.info("Atlas Server is not ready. Waiting for {} milliseconds to retry...",
                                 SERVER_READY_WAIT_TIME_MS);
@@ -258,8 +382,21 @@ public class NotificationHookConsumer implements Service, ActiveStateChangeHandl
             return true;
         }
 
-        public void stop() {
+        @Override
+        public void shutdown() {
+            super.initiateShutdown();
             shouldRun.set(false);
+            consumer.close();
+            super.awaitShutdown();
         }
+    }
+
+    private void audit(String messageUser, String method, String path) {
+        if (LOG.isDebugEnabled()) {
+            LOG.debug("==> audit({},{}, {})", messageUser, method, path);
+        }
+
+        AuditFilter.audit(messageUser, THREADNAME_PREFIX, method, LOCALHOST, path, LOCALHOST,
+                DateTimeHelper.formatDateUTC(new Date()));
     }
 }

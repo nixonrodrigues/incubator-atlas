@@ -18,9 +18,10 @@
 
 package org.apache.atlas.web.service;
 
-import com.google.inject.Inject;
 import org.apache.atlas.ApplicationProperties;
+import org.apache.atlas.AtlasErrorCode;
 import org.apache.atlas.AtlasException;
+import org.apache.atlas.exception.AtlasBaseException;
 import org.apache.atlas.ha.HAConfiguration;
 import org.apache.commons.configuration.Configuration;
 import org.apache.curator.framework.CuratorFramework;
@@ -31,8 +32,10 @@ import org.apache.zookeeper.data.ACL;
 import org.apache.zookeeper.data.Stat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
 import scala.actors.threadpool.Arrays;
 
+import javax.inject.Inject;
 import java.nio.charset.Charset;
 import java.util.List;
 
@@ -43,6 +46,7 @@ import java.util.List;
  * under a read-write lock implemented using Curator's {@link InterProcessReadWriteLock} to
  * provide for safety across multiple processes.
  */
+@Component
 public class ActiveInstanceState {
 
     private final Configuration configuration;
@@ -81,23 +85,27 @@ public class ActiveInstanceState {
      * @throws Exception
      * @param serverId ID of this server instance
      */
-    public void update(String serverId) throws Exception {
-        CuratorFramework client = curatorFactory.clientInstance();
-        String atlasServerAddress = HAConfiguration.getBoundAddressForId(configuration, serverId);
-        HAConfiguration.ZookeeperProperties zookeeperProperties =
-                HAConfiguration.getZookeeperProperties(configuration);
-        List<ACL> acls = Arrays.asList(
-                new ACL[]{AtlasZookeeperSecurityProperties.parseAcl(zookeeperProperties.getAcl(),
-                    ZooDefs.Ids.OPEN_ACL_UNSAFE.get(0))});
-        Stat serverInfo = client.checkExists().forPath(getZnodePath(zookeeperProperties));
-        if (serverInfo == null) {
-            client.create().
-                    withMode(CreateMode.EPHEMERAL).
-                    withACL(acls).
-                    forPath(getZnodePath(zookeeperProperties));
+    public void update(String serverId) throws AtlasBaseException {
+        try {
+            CuratorFramework client = curatorFactory.clientInstance();
+            HAConfiguration.ZookeeperProperties zookeeperProperties =
+                    HAConfiguration.getZookeeperProperties(configuration);
+            String atlasServerAddress = HAConfiguration.getBoundAddressForId(configuration, serverId);
+            List<ACL> acls = Arrays.asList(
+                    new ACL[]{AtlasZookeeperSecurityProperties.parseAcl(zookeeperProperties.getAcl(),
+                            ZooDefs.Ids.OPEN_ACL_UNSAFE.get(0))});
+            Stat serverInfo = client.checkExists().forPath(getZnodePath(zookeeperProperties));
+            if (serverInfo == null) {
+                client.create().
+                        withMode(CreateMode.EPHEMERAL).
+                        withACL(acls).
+                        forPath(getZnodePath(zookeeperProperties));
+            }
+            client.setData().forPath(getZnodePath(zookeeperProperties),
+                    atlasServerAddress.getBytes(Charset.forName("UTF-8")));
+        } catch (Exception e) {
+            throw new AtlasBaseException(AtlasErrorCode.CURATOR_FRAMEWORK_UPDATE, e, "forPath: getZnodePath");
         }
-        client.setData().forPath(getZnodePath(zookeeperProperties),
-                atlasServerAddress.getBytes(Charset.forName("UTF-8")));
     }
 
     private String getZnodePath(HAConfiguration.ZookeeperProperties zookeeperProperties) {

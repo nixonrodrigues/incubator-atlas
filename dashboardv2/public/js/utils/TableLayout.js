@@ -26,7 +26,8 @@ define(['require',
     'backgrid-paginator',
     'backgrid-sizeable',
     'backgrid-orderable',
-    'backgrid-select-all'
+    'backgrid-select-all',
+    'backgrid-columnmanager'
 ], function(require, Backbone, FSTablelayoutTmpl) {
     'use strict';
 
@@ -103,10 +104,13 @@ define(['require',
                 }
             },
             columnOpts: {
-                initialColumnsVisible: 4,
-                // State settings
-                saveState: false,
-                loadStateOnInit: true
+                opts: {
+                    initialColumnsVisible: 4,
+                    // State settings
+                    saveState: false,
+                    loadStateOnInit: true
+                },
+                visibilityControlOpts: {}
             },
 
             includePagination: true,
@@ -125,6 +129,8 @@ define(['require',
 
             includeOrderAbleColumns: false,
 
+            includeOverlayLoader: false,
+
 
             /** ui events hash */
             events: function() {
@@ -140,7 +146,7 @@ define(['require',
             initialize: function(options) {
                 _.extend(this, _.pick(options, 'collection', 'columns', 'includePagination',
                     'includeHeaderSearch', 'includeFilter', 'includePageSize',
-                    'includeFooterRecords', 'includeColumnManager', 'includeSizeAbleColumns', 'includeOrderAbleColumns'));
+                    'includeFooterRecords', 'includeColumnManager', 'includeSizeAbleColumns', 'includeOrderAbleColumns', 'includeOverlayLoader'));
 
                 _.extend(this.gridOpts, options.gridOpts, { collection: this.collection, columns: this.columns });
                 _.extend(this.filterOpts, options.filterOpts);
@@ -155,9 +161,15 @@ define(['require',
             bindEvents: function() {
                 this.listenTo(this.collection, 'request', function() {
                     this.$('div[data-id="r_tableSpinner"]').addClass('show');
+                    if (this.includeOverlayLoader) {
+                        this.$('.t_tableOverlay').show();
+                    }
                 }, this);
                 this.listenTo(this.collection, 'sync error', function() {
                     this.$('div[data-id="r_tableSpinner"]').removeClass('show');
+                    if (this.includeOverlayLoader) {
+                        this.$('.t_tableOverlay').hide();
+                    }
                 }, this);
 
                 this.listenTo(this.collection, 'reset', function(collection, response) {
@@ -180,30 +192,6 @@ define(['require',
                 this.listenTo(this.collection, "backgrid:sort", function() {
                     this.collection.trigger("sort");
                 });
-
-                /*this.listenTo(this.collection, 'remove', function(model, collection, response){
-                    if (model.isNew() || !this.includePagination) {
-                        return;
-                    }
-                    if (this.collection.state && this.collection.state.totalRecords>0) {
-                        this.collection.state.totalRecords-=1;
-                    }
-                    if (this.collection.length===0 && this.collection.state && this.collection.state.totalRecords>0) {
-
-                        if (this.collection.state.totalRecords>this.collection.state.currentPage*this.collection.state.pageSize) {
-                            this.collection.fetch({reset:true});
-                        } else {
-                            if (this.collection.state.currentPage>0) {
-                                this.collection.state.currentPage-=1;
-                                this.collection.fetch({reset:true});
-                            }
-                        }
-
-                    } else if (this.collection.length===0 && this.collection.state && this.collection.state.totalRecords===0) {
-                        this.collection.state.currentPage=0;
-                        this.collection.fetch({reset:true});
-                    }
-                }, this);*/
 
                 // It will show tool tip when td has ellipsis  Property
                 this.listenTo(this.collection, "backgrid:refresh", function() {
@@ -250,7 +238,9 @@ define(['require',
              */
             renderTable: function() {
                 var that = this;
-                this.rTableList.show(new Backgrid.Grid(this.gridOpts));
+                this.rTableList.show(new Backgrid.Grid(this.gridOpts).on('backgrid:rendered', function() {
+                    that.trigger('backgrid:rendered', this)
+                }));
             },
 
             /**
@@ -310,21 +300,27 @@ define(['require',
                 var totalRecords = collState.totalRecords || 0;
                 var pageStartIndex = totalRecords ? (collState.currentPage * collState.pageSize) : 0;
                 var pageEndIndex = pageStartIndex + this.collection.length;
-                this.$('[data-id="r_footerRecords"]').html('<h5>Showing ' + (totalRecords ? pageStartIndex + 1 : 1) + ' - ' + pageEndIndex + '</h5>');
+                this.$('[data-id="r_footerRecords"]').html('<h5>Showing ' + (totalRecords ? pageStartIndex + 1 : (this.collection.length === 0) ? 0 : 1) + ' - ' + pageEndIndex + '</h5>');
                 return this;
             },
             /**
              * ColumnManager for the table
              */
             renderColumnManager: function() {
-                var $el = this.$("[data-id='control']");
-                var colManager = new Backgrid.Extension.ColumnManager(this.columns, this.columnOpts);
-                // Add control
-                var colVisibilityControl = new Backgrid.Extension.ColumnManagerVisibilityControl({
-                    columnManager: colManager
-                });
-
+                var that = this,
+                    $el = this.$("[data-id='control']"),
+                    colManager = new Backgrid.Extension.ColumnManager(this.columns, this.columnOpts.opts),
+                    // Add control
+                    colVisibilityControl = new Backgrid.Extension.ColumnManagerVisibilityControl(_.extend({
+                        columnManager: colManager,
+                    }, this.columnOpts.visibilityControlOpts));
                 $el.append(colVisibilityControl.render().el);
+                colManager.on("state-changed", function(state) {
+                    that.collection.trigger("state-changed", state);
+                });
+                colManager.on("state-saved", function() {
+                    that.collection.trigger("state-changed");
+                });
             },
 
             renderSizeAbleColumns: function() {
@@ -339,7 +335,7 @@ define(['require',
                 // Add resize handlers
                 var sizeHandler = new Backgrid.Extension.SizeAbleColumnsHandlers({
                     sizeAbleColumns: sizeAbleCol,
-                    grid: this.getGridObj(),
+                    // grid: this.getGridObj(),
                     saveModelWidth: true
                 });
                 this.$('thead').before(sizeHandler.render().el);
@@ -357,6 +353,7 @@ define(['require',
                     grid: this.getGridObj(),
                     columns: this.columns
                 });
+                this.$('thead').before(sizeAbleCol.render().el);
                 var orderHandler = new Backgrid.Extension.OrderableColumns({
                     grid: this.getGridObj(),
                     sizeAbleColumns: sizeAbleCol

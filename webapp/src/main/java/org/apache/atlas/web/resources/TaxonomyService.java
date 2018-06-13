@@ -18,20 +18,30 @@
 
 package org.apache.atlas.web.resources;
 
-import org.apache.atlas.AtlasException;
 import org.apache.atlas.catalog.*;
-import org.apache.atlas.catalog.Request;
 import org.apache.atlas.catalog.exception.CatalogException;
 import org.apache.atlas.catalog.exception.InvalidPayloadException;
+import org.apache.atlas.exception.AtlasBaseException;
 import org.apache.atlas.services.MetadataService;
+import org.apache.atlas.store.AtlasTypeDefStore;
 import org.apache.atlas.utils.AtlasPerfTracer;
 import org.apache.atlas.web.util.Servlets;
 import org.slf4j.Logger;
+import org.springframework.stereotype.Component;
 
 import javax.inject.Inject;
-import javax.inject.Singleton;
-import javax.ws.rs.*;
-import javax.ws.rs.core.*;
+import javax.ws.rs.DELETE;
+import javax.ws.rs.GET;
+import javax.ws.rs.POST;
+import javax.ws.rs.PUT;
+import javax.ws.rs.Path;
+import javax.ws.rs.PathParam;
+import javax.ws.rs.Produces;
+import javax.ws.rs.core.Context;
+import javax.ws.rs.core.HttpHeaders;
+import javax.ws.rs.core.PathSegment;
+import javax.ws.rs.core.Response;
+import javax.ws.rs.core.UriInfo;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -41,7 +51,7 @@ import java.util.Map;
  * Service which handles API requests for taxonomy and term resources.
  */
 @Path("v1/taxonomies")
-@Singleton
+@Component
 public class TaxonomyService extends BaseService {
     private static final Logger PERF_LOG = AtlasPerfTracer.getPerfLogger("rest.TaxonomyService");
 
@@ -49,8 +59,8 @@ public class TaxonomyService extends BaseService {
     private ResourceProvider termResourceProvider;
 
     @Inject
-    public void setMetadataService(MetadataService metadataService) throws AtlasException {
-        DefaultTypeSystem typeSystem = new DefaultTypeSystem(metadataService);
+    public void setMetadataService(MetadataService metadataService, AtlasTypeDefStore typeDefStore) throws AtlasBaseException {
+        DefaultTypeSystem typeSystem = new DefaultTypeSystem(metadataService, typeDefStore);
         taxonomyResourceProvider = createTaxonomyResourceProvider(typeSystem);
         termResourceProvider = createTermResourceProvider(typeSystem);
     }

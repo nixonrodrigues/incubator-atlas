@@ -18,14 +18,17 @@
 
 package org.apache.atlas.services;
 
-import org.apache.atlas.AtlasClient;
 import org.apache.atlas.AtlasException;
+import org.apache.atlas.CreateUpdateEntitiesResult;
 import org.apache.atlas.EntityAuditEvent;
 import org.apache.atlas.listener.EntityChangeListener;
+import org.apache.atlas.model.legacy.EntityResult;
+import org.apache.atlas.typesystem.IReferenceableInstance;
 import org.apache.atlas.typesystem.ITypedReferenceableInstance;
 import org.apache.atlas.typesystem.ITypedStruct;
 import org.apache.atlas.typesystem.Referenceable;
 import org.apache.atlas.typesystem.Struct;
+import org.apache.atlas.typesystem.IStruct;
 import org.apache.atlas.typesystem.types.cache.TypeCache;
 import org.codehaus.jettison.json.JSONObject;
 
@@ -35,6 +38,7 @@ import java.util.Map;
 /**
  * Metadata service.
  */
+@Deprecated
 public interface MetadataService {
 
     /**
@@ -46,7 +50,7 @@ public interface MetadataService {
      */
     JSONObject createType(String typeDefinition) throws AtlasException;
 
-    /**
+    /**z
      * Updates the given types in the type definition
      * @param typeDefinition
      * @return
@@ -76,9 +80,9 @@ public interface MetadataService {
      * Creates an entity, instance of the type.
      *
      * @param entityDefinition definition
-     * @return json array of guids of entities created
+     * @return CreateUpdateEntitiesResult with the guids of the entities created
      */
-    List<String> createEntities(String entityDefinition) throws AtlasException;
+   CreateUpdateEntitiesResult createEntities(String entityDefinition) throws AtlasException;
 
     /**
      * Get a typed entity instance.
@@ -94,11 +98,12 @@ public interface MetadataService {
      * Create entity instances.
      *
      * @param typedInstances  instance to create
-     * @return collection of guids for created entities
+     * @return CreateUpdateEntitiesResult with the guids of the entities created
      *
      * @throws AtlasException if unable to create the entities
      */
-    List<String> createEntities(ITypedReferenceableInstance[] typedInstances) throws AtlasException;
+    CreateUpdateEntitiesResult createEntities(ITypedReferenceableInstance[] typedInstances) throws AtlasException;
+
 
     /**
      * Return the definition for the given guid.
@@ -106,7 +111,20 @@ public interface MetadataService {
      * @param guid guid
      * @return entity definition as JSON
      */
-    String getEntityDefinition(String guid) throws AtlasException;
+    String getEntityDefinitionJson(String guid) throws AtlasException;
+
+    ITypedReferenceableInstance getEntityDefinition(String guid) throws AtlasException;
+
+
+    /**
+     * Return the definition given type and attribute. The attribute has to be unique attribute for the type
+     * @param entityType - type name
+     * @param attribute - attribute name
+     * @param value - attribute value
+     * @return
+     * @throws AtlasException
+     */
+    ITypedReferenceableInstance getEntityDefinitionReference(String entityType, String attribute, String value) throws AtlasException;
 
     /**
      * Return the definition given type and attribute. The attribute has to be unique attribute for the type
@@ -132,27 +150,36 @@ public interface MetadataService {
      *  @param guid entity id
      * @param attribute property name
      * @param value    property value
-     * @return json array of guids of entities created/updated
+     * @return {@link CreateUpdateEntitiesResult} with the guids of the entities that were created/updated
      */
-    AtlasClient.EntityResult updateEntityAttributeByGuid(String guid, String attribute, String value) throws AtlasException;
+    CreateUpdateEntitiesResult updateEntityAttributeByGuid(String guid, String attribute, String value) throws AtlasException;
 
     /**
      * Supports Partial updates of an entity. Users can update a subset of attributes for an entity identified by its guid
      * Note however that it cannot be used to set attribute values to null or delete attrbute values
      * @param guid entity id
      * @param entity
-     * @return json array of guids of entities created/updated
+     * @return {@link CreateUpdateEntitiesResult} with the guids of the entities that were created/updated
      * @throws AtlasException
      */
-    AtlasClient.EntityResult updateEntityPartialByGuid(String guid, Referenceable entity) throws AtlasException;
+    CreateUpdateEntitiesResult updateEntityPartialByGuid(String guid, Referenceable entity) throws AtlasException;
 
     /**
      * Batch API - Adds/Updates the given entity id(guid).
      *
      * @param entityJson entity json
-     * @return json array of guids of entities created/updated
+     * @return {@link CreateUpdateEntitiesResult} with the guids of the entities that were created/updated
      */
-    AtlasClient.EntityResult updateEntities(String entityJson) throws AtlasException;
+    CreateUpdateEntitiesResult updateEntities(String entityJson) throws AtlasException;
+
+
+    /**
+     * Batch API - Adds/Updates the given entity id(guid).
+     *
+     * @param entityJson entity json
+     * @return {@link CreateUpdateEntitiesResult} with the guids of the entities that were created/updated
+     */
+    CreateUpdateEntitiesResult updateEntities(ITypedReferenceableInstance[] iTypedReferenceableInstances) throws AtlasException;
 
     // Trait management functions
 
@@ -166,7 +193,7 @@ public interface MetadataService {
      * @return Guid of updated entity
      * @throws AtlasException
      */
-    AtlasClient.EntityResult updateEntityByUniqueAttribute(String typeName, String uniqueAttributeName,
+    CreateUpdateEntitiesResult updateEntityByUniqueAttribute(String typeName, String uniqueAttributeName,
                                                            String attrValue,
                                                            Referenceable updatedEntity) throws AtlasException;
 
@@ -197,6 +224,15 @@ public interface MetadataService {
      */
     void addTrait(String guid, ITypedStruct traitInstance) throws AtlasException;
 
+
+    /**
+     * Adds a new trait to a list of existing entities represented by their respective guids
+     * @param entityGuids   list of guids of entities
+     * @param traitInstance trait instance json that needs to be added to entities
+     * @throws AtlasException
+     */
+    void addTrait(List<String> entityGuids, ITypedStruct traitInstance) throws AtlasException;
+
     /**
      * Create a typed trait instance.
      *
@@ -213,7 +249,7 @@ public interface MetadataService {
      * @return
      * @throws AtlasException
      */
-    String getTraitDefinition(String guid, String traitName) throws AtlasException;
+    IStruct getTraitDefinition(String guid, String traitName) throws AtlasException;
 
     /**
      * Deletes a given trait from an existing entity represented by a guid.
@@ -231,7 +267,7 @@ public interface MetadataService {
      * @return List of guids for deleted entities
      * @throws AtlasException
      */
-    AtlasClient.EntityResult deleteEntities(List<String> guids) throws AtlasException;
+    EntityResult deleteEntities(List<String> guids) throws AtlasException;
     
     /**
      * Register a listener for entity change.
@@ -256,8 +292,8 @@ public interface MetadataService {
      * @return List of guids for deleted entities (including their composite references)
      * @throws AtlasException
      */
-    AtlasClient.EntityResult deleteEntityByUniqueAttribute(String typeName, String uniqueAttributeName,
-                                                           String attrValue) throws AtlasException;
+    EntityResult deleteEntityByUniqueAttribute(String typeName, String uniqueAttributeName,
+                                               String attrValue) throws AtlasException;
 
     /**
      * Returns entity audit events for entity id in the decreasing order of timestamp
@@ -267,4 +303,15 @@ public interface MetadataService {
      * @return
      */
     List<EntityAuditEvent> getAuditEvents(String guid, String startKey, short count) throws AtlasException;
+
+    /**
+     * Deserializes entity instances into ITypedReferenceableInstance array.
+     * @param entityInstanceDefinition
+     * @return ITypedReferenceableInstance[]
+     * @throws AtlasException
+     */
+    ITypedReferenceableInstance[] deserializeClassInstances(String entityInstanceDefinition) throws AtlasException;
+
+    ITypedReferenceableInstance validateAndConvertToTypedInstance(IReferenceableInstance updatedEntity, String typeName)
+                                                                                                throws AtlasException;
 }

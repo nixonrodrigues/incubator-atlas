@@ -18,8 +18,9 @@
 
 package org.apache.atlas.repository;
 
-import org.apache.atlas.AtlasClient;
 import org.apache.atlas.AtlasException;
+import org.apache.atlas.CreateUpdateEntitiesResult;
+import org.apache.atlas.model.legacy.EntityResult;
 import org.apache.atlas.typesystem.ITypedReferenceableInstance;
 import org.apache.atlas.typesystem.ITypedStruct;
 import org.apache.atlas.typesystem.exception.EntityExistsException;
@@ -33,6 +34,7 @@ import java.util.List;
 /**
  * An interface for persisting metadata into a blueprints enabled graph db.
  */
+@Deprecated
 public interface MetadataRepository {
 
     /**
@@ -54,6 +56,11 @@ public interface MetadataRepository {
      * @return
      */
     String getStateAttributeName();
+    /**
+     * Returns the attribute name used for entity version
+     * @return
+     */
+    String getVersionAttributeName();
 
     /**
      * Return the property key used to store a given traitName in the repository.
@@ -86,11 +93,11 @@ public interface MetadataRepository {
      * Creates an entity definition (instance) corresponding to a given type.
      *
      * @param entities     entity (typed instance)
-     * @return a globally unique identifier
+     * @return CreateOrUpdateEntitiesResult with the guids of the entities that were created
      * @throws RepositoryException
      * @throws EntityExistsException
      */
-    List<String> createEntities(ITypedReferenceableInstance... entities) throws RepositoryException, EntityExistsException;
+    CreateUpdateEntitiesResult createEntities(ITypedReferenceableInstance... entities) throws RepositoryException, EntityExistsException;
 
     /**
      * Fetch the complete definition of an entity given its GUID.
@@ -98,8 +105,19 @@ public interface MetadataRepository {
      * @param guid globally unique identifier for the entity
      * @return entity (typed instance) definition
      * @throws RepositoryException
+     * @throws EntityNotFoundException
      */
     ITypedReferenceableInstance getEntityDefinition(String guid) throws RepositoryException, EntityNotFoundException;
+
+    /**
+     * Fetch the complete entity definitions for the entities with the given GUIDs
+     *
+     * @param guids globally unique identifiers for the entities
+     * @return entity (typed instance) definitions list
+     * @throws RepositoryException
+     * @throws EntityNotFoundException
+     */
+    List<ITypedReferenceableInstance> getEntityDefinitions(String... guids) throws RepositoryException, EntityNotFoundException;
 
     /**
      * Gets the list of entities for a given entity type.
@@ -117,7 +135,7 @@ public interface MetadataRepository {
      * @return guids of deleted entities
      * @throws RepositoryException
      */
-    AtlasClient.EntityResult deleteEntities(List<String> guids) throws RepositoryException;
+    EntityResult deleteEntities(List<String> guids) throws RepositoryException;
     
     
     // Trait management functions
@@ -141,6 +159,14 @@ public interface MetadataRepository {
     void addTrait(String guid, ITypedStruct traitInstance) throws RepositoryException;
 
     /**
+     * Adds a new trait to a list of entities represented by their respective guids
+     * @param entityGuids   list of globally unique identifier for the entities
+     * @param traitInstance trait instance that needs to be added to entities
+     * @throws RepositoryException
+     */
+    void addTrait(List<String> entityGuids, ITypedStruct traitInstance) throws RepositoryException;
+
+    /**
      * Deletes a given trait from an existing entity represented by a guid.
      *
      * @param guid                 globally unique identifier for the entity
@@ -153,13 +179,13 @@ public interface MetadataRepository {
      * Adds/Updates the property to the entity that corresponds to the GUID
      * Supports only primitive attribute/Class Id updations.
      */
-    AtlasClient.EntityResult updatePartial(ITypedReferenceableInstance entity) throws RepositoryException;
+    CreateUpdateEntitiesResult updatePartial(ITypedReferenceableInstance entity) throws RepositoryException;
 
     /**
      * Adds the property to the entity that corresponds to the GUID
      * @param entitiesToBeUpdated The entities to be updated
      */
-    AtlasClient.EntityResult updateEntities(ITypedReferenceableInstance... entitiesToBeUpdated) throws RepositoryException;
+    CreateUpdateEntitiesResult updateEntities(ITypedReferenceableInstance... entitiesToBeUpdated) throws RepositoryException;
 
     /**
      * Returns the entity for the given type and qualified name

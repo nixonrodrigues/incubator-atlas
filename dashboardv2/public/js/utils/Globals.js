@@ -20,8 +20,6 @@ define(['require'], function(require) {
     'use strict';
 
     var Globals = {};
-
-    Globals.baseURL = '';
     Globals.settings = {};
     Globals.settings.PAGE_SIZE = 25;
     Globals.saveApplicationState = {
@@ -34,21 +32,9 @@ define(['require'], function(require) {
         },
         detailPageState: {}
     };
-    Globals.auditAction = {
-        ENTITY_CREATE: "Entity Created",
-        ENTITY_UPDATE: "Entity Updated",
-        ENTITY_DELETE: "Entity Deleted",
-        TAG_ADD: "Tag Added",
-        TAG_DELETE: "Tag Deleted"
-    }
-    Globals.entityStateReadOnly = {
-        ACTIVE: false,
-        DELETED: true
-    }
     Globals.userLogedIn = {
         status: false,
         response: {}
     }
-
     return Globals;
 });

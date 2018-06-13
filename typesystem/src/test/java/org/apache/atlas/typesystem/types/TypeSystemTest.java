@@ -188,18 +188,18 @@ public class TypeSystemTest extends BaseTest {
 
         HierarchicalTypeDefinition<TraitType> trait_A = createTraitTypeDef("trait_A", null,
                 createRequiredAttrDef("t_A", DataTypes.STRING_TYPE));
-        HierarchicalTypeDefinition<TraitType> trait_B = createTraitTypeDef("trait_B", ImmutableSet.<String>of("trait_A"),
+        HierarchicalTypeDefinition<TraitType> trait_B = createTraitTypeDef("trait_B", ImmutableSet.of("trait_A"),
                 createRequiredAttrDef("t_B", DataTypes.STRING_TYPE));
-        HierarchicalTypeDefinition<TraitType> trait_C = createTraitTypeDef("trait_C", ImmutableSet.<String>of("trait_A"),
+        HierarchicalTypeDefinition<TraitType> trait_C = createTraitTypeDef("trait_C", ImmutableSet.of("trait_A"),
                 createRequiredAttrDef("t_C", DataTypes.STRING_TYPE));
-        HierarchicalTypeDefinition<TraitType> trait_D = createTraitTypeDef("trait_D", ImmutableSet.<String>of("trait_B", "trait_C"),
+        HierarchicalTypeDefinition<TraitType> trait_D = createTraitTypeDef("trait_D", ImmutableSet.of("trait_B", "trait_C"),
                 createRequiredAttrDef("t_D", DataTypes.STRING_TYPE));
 
         HierarchicalTypeDefinition<ClassType> class_A = createClassTypeDef("class_A", null,
                 createRequiredAttrDef("c_A", DataTypes.STRING_TYPE));
-        HierarchicalTypeDefinition<ClassType> class_B = createClassTypeDef("class_B", ImmutableSet.<String>of("class_A"),
+        HierarchicalTypeDefinition<ClassType> class_B = createClassTypeDef("class_B", ImmutableSet.of("class_A"),
                 createRequiredAttrDef("c_B", DataTypes.STRING_TYPE));
-        HierarchicalTypeDefinition<ClassType> class_C = createClassTypeDef("class_C", ImmutableSet.<String>of("class_B"),
+        HierarchicalTypeDefinition<ClassType> class_C = createClassTypeDef("class_C", ImmutableSet.of("class_B"),
                 createRequiredAttrDef("c_C", DataTypes.STRING_TYPE));
 
         ts.defineTypes(ImmutableList.<EnumTypeDefinition>of(), ImmutableList.of(struct_A, struct_B),
@@ -275,7 +275,7 @@ public class TypeSystemTest extends BaseTest {
     }
 
     @Test
-    public void testDuplicateTypenames() throws Exception {
+    public void testRedefineExistingType() throws Exception {
         TypeSystem typeSystem = getTypeSystem();
         HierarchicalTypeDefinition<TraitType> trait = TypesUtil
                 .createTraitTypeDef(random(), "description", ImmutableSet.<String>of(),
@@ -287,6 +287,25 @@ public class TypeSystemTest extends BaseTest {
             fail("Expected TypeExistsException");
         } catch(TypeExistsException e) {
             //expected
+        }
+    }
+
+    @Test
+    public void testDuplicateNewTypenames() throws Exception {
+        TypeSystem typeSystem = getTypeSystem();
+        HierarchicalTypeDefinition<TraitType> trait1 = TypesUtil
+                .createTraitTypeDef(random(), "description", ImmutableSet.<String>of(),
+                        TypesUtil.createRequiredAttrDef("type", DataTypes.STRING_TYPE));
+        // create another trait with the same name
+        HierarchicalTypeDefinition<TraitType> trait2 = TypesUtil
+                .createTraitTypeDef(trait1.typeName, "description", ImmutableSet.<String>of(),
+                        TypesUtil.createRequiredAttrDef("type", DataTypes.STRING_TYPE));
+
+        try {
+            typeSystem.defineTypes(ImmutableList.<EnumTypeDefinition>of(), ImmutableList.<StructTypeDefinition>of(),
+                    ImmutableList.of(trait1, trait2), ImmutableList.<HierarchicalTypeDefinition<ClassType>>of());
+        } catch(AtlasException e) {
+            fail("Exception unexpected");
         }
     }
 

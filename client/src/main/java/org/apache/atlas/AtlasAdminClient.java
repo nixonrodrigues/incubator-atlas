@@ -18,6 +18,8 @@
 
 package org.apache.atlas;
 
+import org.apache.atlas.model.metrics.AtlasMetrics;
+import org.apache.atlas.type.AtlasType;
 import org.apache.atlas.utils.AuthenticationUtil;
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.CommandLineParser;
@@ -27,6 +29,8 @@ import org.apache.commons.cli.Option;
 import org.apache.commons.cli.Options;
 import org.apache.commons.cli.ParseException;
 import org.apache.commons.configuration.Configuration;
+
+import java.util.Arrays;
 
 
 /**
@@ -42,6 +46,7 @@ import org.apache.commons.configuration.Configuration;
 public class AtlasAdminClient {
 
     private static final Option STATUS = new Option("status", false, "Get the status of an atlas instance");
+    private static final Option STATS = new Option("stats", false, "Get the metrics of an atlas instance");
     private static final Options OPTIONS = new Options();
 
     private static final int INVALID_OPTIONS_STATUS = 1;
@@ -49,6 +54,7 @@ public class AtlasAdminClient {
 
     static {
         OPTIONS.addOption(STATUS);
+        OPTIONS.addOption(STATS);
     }
 
     public static void main(String[] args) throws AtlasException, ParseException {
@@ -60,27 +66,40 @@ public class AtlasAdminClient {
     private int run(String[] args) throws AtlasException {
         CommandLine commandLine = parseCommandLineOptions(args);
         Configuration configuration = ApplicationProperties.get();
-        String atlasServerUri = configuration.getString(
-                AtlasConstants.ATLAS_REST_ADDRESS_KEY, AtlasConstants.DEFAULT_ATLAS_REST_ADDRESS);
+        String[] atlasServerUri = configuration.getStringArray(AtlasConstants.ATLAS_REST_ADDRESS_KEY);
+
+        if (atlasServerUri == null || atlasServerUri.length == 0) {
+            atlasServerUri = new String[] { AtlasConstants.DEFAULT_ATLAS_REST_ADDRESS };
+        }
 
         AtlasClient atlasClient = null;
         if (!AuthenticationUtil.isKerberosAuthenticationEnabled()) {
             String[] basicAuthUsernamePassword = AuthenticationUtil.getBasicAuthenticationInput();
-            atlasClient = new AtlasClient(new String[]{atlasServerUri}, basicAuthUsernamePassword);
+            atlasClient = new AtlasClient(atlasServerUri, basicAuthUsernamePassword);
         } else {
-            atlasClient = new AtlasClient(atlasServerUri, null, null);
+            atlasClient = new AtlasClient(atlasServerUri);
         }
         return handleCommand(commandLine, atlasServerUri, atlasClient);
     }
 
-    private int handleCommand(CommandLine commandLine, String atlasServerUri, AtlasClient atlasClient) {
+    private int handleCommand(CommandLine commandLine, String[] atlasServerUri, AtlasClient atlasClient) {
         int cmdStatus = PROGRAM_ERROR_STATUS;
         if (commandLine.hasOption(STATUS.getOpt())) {
             try {
                 System.out.println(atlasClient.getAdminStatus());
                 cmdStatus = 0;
             } catch (AtlasServiceException e) {
-                System.err.println("Could not retrieve status of the server at " + atlasServerUri);
+                System.err.println("Could not retrieve status of the server at " + Arrays.toString(atlasServerUri));
+                printStandardHttpErrorDetails(e);
+            }
+        } else if (commandLine.hasOption(STATS.getOpt())) {
+            try {
+                AtlasMetrics atlasMetrics = atlasClient.getAtlasMetrics();
+                String json = AtlasType.toJson(atlasMetrics);
+                System.out.println(json);
+                cmdStatus = 0;
+            } catch (AtlasServiceException e) {
+                System.err.println("Could not retrieve metrics of the server at " + Arrays.toString(atlasServerUri));
                 printStandardHttpErrorDetails(e);
             }
         } else {

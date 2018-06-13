@@ -19,10 +19,14 @@
 define(['require',
     'backbone',
     'hbs!tmpl/tag/createTagLayoutView_tmpl',
-    'utils/Utils'
-], function(require, Backbone, CreateTagLayoutViewTmpl, Utils) {
+    'utils/Utils',
+    'views/tag/TagAttributeItemView',
+    'collection/VTagList',
+    'utils/UrlLinks',
+    'platform'
+], function(require, Backbone, CreateTagLayoutViewTmpl, Utils, TagAttributeItemView, VTagList, UrlLinks, platform) {
 
-    var CreateTagLayoutView = Backbone.Marionette.LayoutView.extend(
+    var CreateTagLayoutView = Backbone.Marionette.CompositeView.extend(
         /** @lends CreateTagLayoutView */
         {
             _viewName: 'CreateTagLayoutView',
@@ -39,16 +43,30 @@ define(['require',
             /** Layout sub regions */
             regions: {},
 
+            childView: TagAttributeItemView,
+
+            childViewContainer: "[data-id='addAttributeDiv']",
+
+            childViewOptions: function() {
+                return {
+                    // saveButton: this.ui.saveButton,
+                    parentView: this
+                };
+            },
             /** ui selector cache */
             ui: {
                 tagName: "[data-id='tagName']",
                 parentTag: "[data-id='parentTagList']",
                 description: "[data-id='description']",
-                title: "[data-id='title']"
+                title: "[data-id='title']",
+                attributeData: "[data-id='attributeData']",
+                addAttributeDiv: "[data-id='addAttributeDiv']",
+                createTagForm: '[data-id="createTagForm"]'
             },
             /** ui events hash */
             events: function() {
                 var events = {};
+                events["click " + this.ui.attributeData] = "onClickAddAttriBtn";
                 return events;
             },
             /**
@@ -56,31 +74,81 @@ define(['require',
              * @constructs
              */
             initialize: function(options) {
-                _.extend(this, _.pick(options, 'tagCollection', 'tag', 'termCollection', 'descriptionData'));
-                if (this.tagCollection && this.tagCollection.length > 0 && this.tagCollection.first().get('traitTypes')) {
-                    this.description = this.tagCollection.first().get('traitTypes')[0].typeDescription;
+                _.extend(this, _.pick(options, 'tagCollection', 'model', 'tag', 'termCollection', 'descriptionData'));
+                if (this.model) {
+                    this.description = this.model.get('description');
                 } else if (this.termCollection) {
                     this.description = this.descriptionData;
                 } else {
                     this.create = true;
                 }
+                this.collection = new Backbone.Collection();
+                this.typeEnum = new VTagList();
+                this.typeEnum.url = UrlLinks.typedefsUrl().defs;
+                this.typeEnum.modelAttrName = "enumDefs";
             },
             bindEvents: function() {},
             onRender: function() {
+                var that = this;
+                this.$('.fontLoader').show();
                 if (this.create) {
                     this.tagCollectionList();
                 } else {
-                    this.ui.title.html('<span>' + this.tag + '</span>');
+                    this.ui.title.html('<span>' + _.escape(this.tag) + '</span>');
                 }
+                if (!('placeholder' in HTMLInputElement.prototype)) {
+                    this.ui.createTagForm.find('input,textarea').placeholder();
+                }
+                that.typeEnum.fetch({
+                    reset: true,
+                    complete: function(model, response) {
+                        that.hideLoader();
+                    }
+                });
             },
             tagCollectionList: function() {
                 var str = '',
                     that = this;
                 this.ui.parentTag.empty();
-                this.tagCollection.each(function(val) {
-                    str += '<option>' + val.get("tags") + '</option>';
+                this.tagCollection.fullCollection.each(function(val) {
+                    var name = Utils.getName(val.toJSON()),
+                        checkTagOrTerm = Utils.checkTagOrTerm(name);
+                    if (checkTagOrTerm.tag) {
+                        str += '<option>' + (name) + '</option>';
+                    }
                 });
                 that.ui.parentTag.html(str);
+                // IE9 support
+                if (platform.name === "IE") {
+                    that.ui.parentTag.select2({
+                        multiple: true,
+                        placeholder: "Search Tags",
+                        allowClear: true
+                    });
+                }
+            },
+            hideLoader: function() {
+                this.$('.fontLoader').hide();
+                this.$('.hide').removeClass('hide');
+            },
+            collectionAttribute: function() {
+                this.collection.add(new Backbone.Model({
+                    "name": "",
+                    "typeName": "string",
+                    "isOptional": true,
+                    "cardinality": "SINGLE",
+                    "valuesMinCount": 0,
+                    "valuesMaxCount": 1,
+                    "isUnique": false,
+                    "isIndexable": false
+                }));
+            },
+            onClickAddAttriBtn: function() {
+                this.collectionAttribute();
+                if (!('placeholder' in HTMLInputElement.prototype)) {
+                    this.ui.addAttributeDiv.find('input,textarea').placeholder();
+                }
+
             }
         });
     return CreateTagLayoutView;

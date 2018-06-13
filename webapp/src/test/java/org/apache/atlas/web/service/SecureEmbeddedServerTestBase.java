@@ -23,10 +23,10 @@ import org.apache.atlas.ApplicationProperties;
 import org.apache.atlas.Atlas;
 import org.apache.atlas.AtlasException;
 import org.apache.atlas.web.TestUtils;
-import org.apache.atlas.web.resources.AdminJerseyResourceIT;
-import org.apache.atlas.web.resources.EntityJerseyResourceIT;
-import org.apache.atlas.web.resources.MetadataDiscoveryJerseyResourceIT;
-import org.apache.atlas.web.resources.TypesJerseyResourceIT;
+import org.apache.atlas.web.integration.AdminJerseyResourceIT;
+import org.apache.atlas.web.integration.EntityJerseyResourceIT;
+import org.apache.atlas.web.integration.MetadataDiscoveryJerseyResourceIT;
+import org.apache.atlas.web.integration.TypesJerseyResourceIT;
 import org.apache.commons.configuration.PropertiesConfiguration;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
@@ -69,15 +69,13 @@ public class SecureEmbeddedServerTestBase {
         javax.net.ssl.HttpsURLConnection.setDefaultHostnameVerifier(new javax.net.ssl.HostnameVerifier() {
 
                     public boolean verify(String hostname, javax.net.ssl.SSLSession sslSession) {
-                        if (hostname.equals("localhost")) {
-                            return true;
-                        }
-                        return false;
+                        return hostname.equals("localhost");
                     }
                 });
         System.setProperty("javax.net.ssl.trustStore", DEFAULT_KEYSTORE_FILE_LOCATION);
         System.setProperty("javax.net.ssl.trustStorePassword", "keypass");
         System.setProperty("javax.net.ssl.trustStoreType", "JKS");
+        System.setProperty("https.protocols", "TLSv1.2");
     }
 
     @BeforeClass

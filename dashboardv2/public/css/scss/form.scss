@@ -31,9 +31,12 @@
     }
 }
 
-.sidebar-wrapper .form-control {
-    background-color: $white;
-    border: 1px $white solid;
+.sidebar-wrapper {
+    z-index: 9 !important;
+    .form-control {
+        background-color: $white;
+        border: 1px $white solid;
+    }
 }
 
 .well {
@@ -163,6 +166,10 @@ button:focus {
     margin-bottom: 10px;
     border-radius: 4px;
     padding: 5px 10px;
+    &.active {
+        background-color: $color_keppel_approx;
+        color: $white;
+    }
     &:hover {
         background-color: $color_keppel_approx;
         color: $white;
@@ -223,4 +230,24 @@ button:focus {
 
 .block {
     display: block !important;
+}
+
+.editBtn {
+    border-color: $color_mountain_mist_approx;
+    color: $color_mountain_mist_approx;
+    cursor: default;
+    margin: 5px 10px;
+    font-size: 14px;
+    cursor: pointer;
+    padding: 0px 5px;
+    &:hover {
+        border-color: $color_mountain_mist_approx;
+        color: $color_mountain_mist_approx;
+        background-color: $transparent;
+    }
+    &:focus {
+        border-color: $color_mountain_mist_approx;
+        color: $color_mountain_mist_approx;
+        background-color: $transparent;
+    }
 }

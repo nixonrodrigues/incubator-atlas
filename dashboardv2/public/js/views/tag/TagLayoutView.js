@@ -19,12 +19,12 @@
 define(['require',
     'backbone',
     'hbs!tmpl/tag/TagLayoutView_tmpl',
-    'collection/VTagList',
-    'collection/VEntityList',
     'utils/Utils',
     'utils/Messages',
-    'utils/Globals'
-], function(require, Backbone, TagLayoutViewTmpl, VTagList, VEntityList, Utils, Messages, Globals) {
+    'utils/Globals',
+    'utils/UrlLinks',
+    'models/VTag'
+], function(require, Backbone, TagLayoutViewTmpl, Utils, Messages, Globals, UrlLinks, VTag) {
     'use strict';
 
     var TagLayoutView = Backbone.Marionette.LayoutView.extend(
@@ -43,21 +43,14 @@ define(['require',
                 createTag: "[data-id='createTag']",
                 tags: "[data-id='tags']",
                 offLineSearchTag: "[data-id='offlineSearchTag']",
-                deleteTerm: "[data-id='deleteTerm']",
                 refreshTag: '[data-id="refreshTag"]'
-
             },
             /** ui events hash */
             events: function() {
                 var events = {};
                 events["click " + this.ui.createTag] = 'onClickCreateTag';
-                /* events["dblclick " + this.ui.tags] = function(e) {
-                     this.onTagList(e, true);
-                 }*/
                 events["click " + this.ui.tags] = 'onTagList';
-                // events["click " + this.ui.referesh] = 'refereshClick';
                 events["keyup " + this.ui.offLineSearchTag] = 'offlineSearchTag';
-                events["click " + this.ui.deleteTerm] = 'onDeleteTerm';
                 events['click ' + this.ui.refreshTag] = 'fetchCollections';
                 return events;
             },
@@ -66,21 +59,12 @@ define(['require',
              * @constructs
              */
             initialize: function(options) {
-                _.extend(this, _.pick(options, 'globalVent', 'tag'));
-                this.tagCollection = new VTagList();
-                this.collection = new Backbone.Collection();
-
-                this.json = {
-                    "enumTypes": [],
-                    "traitTypes": [],
-                    "structTypes": [],
-                    "classTypes": []
-                };
+                _.extend(this, _.pick(options, 'tag', 'collection', 'typeHeaders', 'value'));
             },
             bindEvents: function() {
                 var that = this;
-                this.listenTo(this.tagCollection, "reset", function() {
-                    this.tagsAndTypeGenerator('tagCollection');
+                this.listenTo(this.collection, "reset add remove", function() {
+                    this.tagsGenerator();
                 }, this);
                 this.ui.tagsParent.on('click', 'li.parent-node a', function() {
                     that.setUrl(this.getAttribute("href"));
@@ -103,8 +87,7 @@ define(['require',
                 });
             },
             fetchCollections: function() {
-                $.extend(this.tagCollection.queryParams, { type: 'TRAIT', notsupertype: 'TaxonomyTerm' });
-                this.tagCollection.fetch({ reset: true });
+                this.collection.fetch({ reset: true });
                 this.ui.offLineSearchTag.val("");
             },
             manualRender: function(tagName) {
@@ -114,30 +97,40 @@ define(['require',
                 }
             },
             setValues: function(manual) {
-                if (Utils.getUrlState.isTagTab() || (Utils.getUrlState.isInitial() && !Globals.taxonomy)) {
+                var $firstEl = this.ui.tagsParent.find('li a') ? this.ui.tagsParent.find('li a').first() : null;
+                if (Utils.getUrlState.isTagTab()) {
                     if (!this.tag) {
                         this.selectFirst = false;
                         this.ui.tagsParent.find('li').first().addClass('active');
-                        if (this.ui.tagsParent.find('li a').first().length) {
+                        if ($firstEl && $firstEl.length) {
+                            url: $firstEl.attr("href"),
                             Utils.setUrl({
-                                url: this.ui.tagsParent.find('li a').first().attr("href"),
+                                url: $firstEl.attr("href"),
                                 mergeBrowserUrl: false,
-                                trigger: true,
                                 updateTabState: function() {
                                     return { tagUrl: this.url, stateChanged: true };
                                 }
                             });
                         }
                     } else {
+                        var presentTag = this.collection.fullCollection.findWhere({ name: this.tag }),
+                            url = Utils.getUrlState.getQueryUrl().hash,
+                            tag = this.tag,
+                            query = null;
+                        if (!presentTag) {
+                            tag = $firstEl.data('name');
+                            url = $firstEl && $firstEl.length ? $firstEl.attr("href") : '#!/tag';
+                            query = $firstEl && $firstEl.length ? { dlttag: true } : null
+                        }
                         Utils.setUrl({
-                            url: Utils.getUrlState.getQueryUrl().hash,
+                            url: url,
+                            urlParams: query,
                             updateTabState: function() {
                                 return { tagUrl: this.url, stateChanged: true };
                             }
                         });
-                        var tag = Utils.getUrlState.getLastValue();
-                        if (this.tag) {
-                            tag = this.tag;
+                        if (!presentTag) {
+                            return false;
                         }
                         this.ui.tagsParent.find('li').removeClass('active');
                         var target = this.ui.tagsParent.find('li').filter(function() {
@@ -154,19 +147,25 @@ define(['require',
                     }
                 }
             },
-            tagsAndTypeGenerator: function(collection, searchString) {
+            tagsGenerator: function(searchString) {
                 var that = this,
                     str = '';
-                _.each(this[collection].fullCollection.models, function(model) {
-                    var tagName = model.get("tags");
-                    if (searchString) {
-                        if (tagName.search(new RegExp(searchString, "i")) != -1) {
-                            str = '<li class="parent-node" data-id="tags"><div class="tools"><i class="fa fa-ellipsis-h tagPopover"></i></div><a href="#!/tag/tagAttribute/' + tagName + '"  data-name="`' + tagName + '`" >' + tagName + '</a></li>' + str;
+                that.collection.fullCollection.comparator = function(model) {
+                    return Utils.getName(model.toJSON(), 'name').toLowerCase();
+                };
+                that.collection.fullCollection.sort().each(function(model) {
+                    var name = Utils.getName(model.toJSON(), 'name');
+                    var checkTagOrTerm = Utils.checkTagOrTerm(name);
+                    if (checkTagOrTerm.tag) {
+                        if (searchString) {
+                            if (name.search(new RegExp(searchString, "i")) != -1) {
+                                str += '<li class="parent-node" data-id="tags"><div class="tools"><i class="fa fa-ellipsis-h tagPopover"></i></div><a href="#!/tag/tagAttribute/' + name + '"  data-name="' + name + '" >' + name + '</a></li>';
+                            } else {
+                                return;
+                            }
                         } else {
-                            return;
+                            str += '<li class="parent-node" data-id="tags"><div class="tools"><i class="fa fa-ellipsis-h tagPopover"></i></div><a href="#!/tag/tagAttribute/' + name + '"  data-name="' + name + '">' + name + '</a></li>';
                         }
-                    } else {
-                        str = '<li class="parent-node" data-id="tags"><div class="tools"><i class="fa fa-ellipsis-h tagPopover"></i></div><a href="#!/tag/tagAttribute/' + tagName + '"  data-name="`' + tagName + '`">' + tagName + '</a></li>' + str;
                     }
                 });
                 this.ui.tagsParent.empty().html(str);
@@ -175,21 +174,20 @@ define(['require',
                 if (this.createTag) {
                     this.createTag = false;
                 }
-
             },
-
             onClickCreateTag: function(e) {
                 var that = this;
-                $(e.currentTarget).blur();
+                $(e.currentTarget).attr("disabled", "true");
                 require([
                     'views/tag/CreateTagLayoutView',
                     'modules/Modal'
                 ], function(CreateTagLayoutView, Modal) {
-                    var view = new CreateTagLayoutView({ 'tagCollection': that.tagCollection });
+                    var view = new CreateTagLayoutView({ 'tagCollection': that.collection });
                     var modal = new Modal({
                         title: 'Create a new tag',
                         content: view,
                         cancelText: "Cancel",
+                        okCloses: false,
                         okText: 'Create',
                         allowCancel: true,
                     }).open();
@@ -198,7 +196,7 @@ define(['require',
                         modal.$el.find('button.ok').removeAttr("disabled");
                     });
                     view.ui.tagName.on('keyup', function(e) {
-                        if (e.keyCode == 8 && e.currentTarget.value == "") {
+                        if ((e.keyCode == 8 || e.keyCode == 32 || e.keyCode == 46) && e.currentTarget.value.trim() == "") {
                             modal.$el.find('button.ok').attr("disabled", "true");
                         }
                     });
@@ -208,50 +206,124 @@ define(['require',
                             placeholder: "Search Tags",
                             allowClear: true
                         });
-                    })
+                    });
                     modal.on('ok', function() {
-                        that.onCreateButton(view);
+                        modal.$el.find('button.ok').attr("disabled", "true");
+                        that.onCreateButton(view, modal);
                     });
                     modal.on('closeModal', function() {
                         modal.trigger('cancel');
+                        that.ui.createTag.removeAttr("disabled");
                     });
                 });
             },
-            onCreateButton: function(ref) {
+            onCreateButton: function(ref, modal) {
                 var that = this;
+                var validate = true;
+                if (modal.$el.find(".attributeInput").length > 0) {
+                    modal.$el.find(".attributeInput").each(function() {
+                        if ($(this).val() === "") {
+                            $(this).css('borderColor', "red")
+                            validate = false;
+                        }
+                    });
+                }
+                modal.$el.find(".attributeInput").keyup(function() {
+                    $(this).css('borderColor', "#e8e9ee");
+                    modal.$el.find('button.ok').removeAttr("disabled");
+                });
+                if (!validate) {
+                    Utils.notifyInfo({
+                        content: "Please fill the attributes or delete the input box"
+                    });
+                    return;
+                }
+
                 this.name = ref.ui.tagName.val();
                 this.description = ref.ui.description.val();
                 var superTypes = [];
                 if (ref.ui.parentTag.val() && ref.ui.parentTag.val()) {
                     superTypes = ref.ui.parentTag.val();
                 }
-                this.json.traitTypes[0] = {
-                    attributeDefinitions: this.collection.toJSON(),
-                    typeName: this.name,
-                    typeDescription: this.description,
-                    superTypes: superTypes,
-                    hierarchicalMetaTypeName: "org.apache.atlas.typesystem.types.TraitType"
+                var attributeObj = ref.collection.toJSON();
+                if (ref.collection.length === 1 && ref.collection.first().get("name") === "") {
+                    attributeObj = [];
+                }
+
+                if (attributeObj.length) {
+                    var superTypesAttributes = [];
+                    _.each(superTypes, function(name) {
+                        var parentTags = that.collection.fullCollection.findWhere({ name: name });
+                        superTypesAttributes = superTypesAttributes.concat(parentTags.get('attributeDefs'));
+                    });
+
+
+                    var duplicateAttributeList = [];
+                    _.each(attributeObj, function(obj) {
+                        var duplicateCheck = _.find(superTypesAttributes, function(activeTagObj) {
+                            return activeTagObj.name.toLowerCase() === obj.name.toLowerCase();
+                        });
+                        if (duplicateCheck) {
+                            duplicateAttributeList.push(obj.name);
+                        }
+                    });
+                    var notifyObj = {
+                        modal: true,
+                        confirm: {
+                            confirm: true,
+                            buttons: [{
+                                    text: 'Ok',
+                                    addClass: 'btn-primary',
+                                    click: function(notice) {
+                                        notice.remove();
+                                    }
+                                },
+                                null
+                            ]
+                        }
+                    }
+
+                    if (duplicateAttributeList.length) {
+                        if (duplicateAttributeList.length < 2) {
+                            var text = "Attribute <b>" + duplicateAttributeList.join(",") + "</b> is duplicate !"
+                        } else {
+                            if (attributeObj.length > duplicateAttributeList.length) {
+                                var text = "Attributes: <b>" + duplicateAttributeList.join(",") + "</b> are duplicate !"
+                            } else {
+                                var text = "All attributes are duplicate !"
+                            }
+                        }
+                        notifyObj['text'] = text;
+                        Utils.notifyConfirm(notifyObj);
+                        return false;
+                    }
+                }
+                this.json = {
+                    classificationDefs: [{
+                        'name': this.name.trim(),
+                        'description': this.description.trim(),
+                        'superTypes': superTypes.length ? superTypes : [],
+                        "attributeDefs": attributeObj
+                    }],
+                    entityDefs: [],
+                    enumDefs: [],
+                    structDefs: []
+
                 };
-                new this.tagCollection.model().set(this.json).save(null, {
+                new this.collection.model().set(this.json).save(null, {
                     success: function(model, response) {
+                        that.ui.createTag.removeAttr("disabled");
                         that.createTag = true;
-                        that.fetchCollections();
+                        that.collection.add(model.get('classificationDefs'));
                         that.setUrl('#!/tag/tagAttribute/' + ref.ui.tagName.val(), true);
                         Utils.notifySuccess({
                             content: "Tag " + that.name + Messages.addSuccessMessage
                         });
-                        that.collection.reset([]);
-                    },
-                    error: function(model, response) {
-                        if (response.responseJSON && response.responseJSON.error) {
-                            Utils.notifyError({
-                                content: response.responseJSON.error
-                            });
-                        }
+                        modal.trigger('cancel');
+                        that.typeHeaders.fetch({ reset: true });
                     }
                 });
             },
-
             setUrl: function(url, create) {
                 Utils.setUrl({
                     url: url,
@@ -263,16 +335,12 @@ define(['require',
                 });
             },
             onTagList: function(e, toggle) {
-                /*if (toggle) {
-                    var assetUl = $(e.currentTarget).siblings('.tagAsset')
-                    assetUl.slideToggle("slow");
-                }*/
                 this.ui.tagsParent.find('li').removeClass("active");
                 $(e.currentTarget).addClass("active");
             },
             offlineSearchTag: function(e) {
                 var type = $(e.currentTarget).data('type');
-                this.tagsAndTypeGenerator('tagCollection', $(e.currentTarget).val());
+                this.tagsGenerator($(e.currentTarget).val());
             },
             createTagAction: function() {
                 var that = this;
@@ -283,7 +351,8 @@ define(['require',
                     container: 'body',
                     content: function() {
                         return "<ul class='tagPopoverList'>" +
-                            "<li class='listTerm' ><i class='fa fa-search'></i> <a href='javascript:void(0)' data-fn='onSearchTerm'>Search Tag</a></li>" +
+                            "<li class='listTerm' ><i class='fa fa-search'></i> <a href='javascript:void(0)' data-fn='onSearchTag'>Search Tag</a></li>" +
+                            "<li class='listTerm' ><i class='fa fa-trash-o'></i> <a href='javascript:void(0)' data-fn='onDeleteTag'>Delete Tag</a></li>" +
                             "</ul>";
                     }
                 });
@@ -294,19 +363,62 @@ define(['require',
                     $(this).popover('toggle');
                 });
             },
-            onSearchTerm: function() {
+            onSearchTag: function() {
                 Utils.setUrl({
                     url: '#!/search/searchResult',
                     urlParams: {
-                        query: this.ui.tagsParent.find('li.active').find("a").data('name'),
-                        searchType: "dsl",
-                        dslChecked: true
+                        tag: this.ui.tagsParent.find('li.active').find("a").data('name'),
+                        searchType: "basic",
+                        dslChecked: false
                     },
                     updateTabState: function() {
                         return { searchUrl: this.url, stateChanged: true };
                     },
                     mergeBrowserUrl: false,
                     trigger: true
+                });
+            },
+            onDeleteTag: function() {
+                var that = this;
+                this.tagName = this.ui.tagsParent.find('li.active').find("a").data('name');
+                this.tagDeleteData = this.ui.tagsParent.find('li.active');
+                var notifyObj = {
+                    modal: true,
+                    ok: function(argument) {
+                        that.onNotifyOk();
+                    },
+                    cancel: function(argument) {}
+                }
+                var text = "Are you sure you want to delete the tag"
+                notifyObj['text'] = text;
+                Utils.notifyConfirm(notifyObj);
+            },
+            onNotifyOk: function(data) {
+                var that = this,
+                    deleteTagData = this.collection.fullCollection.findWhere({ name: this.tagName }),
+                    classificationData = deleteTagData.toJSON(),
+                    deleteJson = {
+                        classificationDefs: [classificationData],
+                        entityDefs: [],
+                        enumDefs: [],
+                        structDefs: []
+                    };
+                deleteTagData.deleteTag({
+                    data: JSON.stringify(deleteJson),
+                    success: function() {
+                        Utils.notifySuccess({
+                            content: "Tag " + that.tagName + Messages.deleteSuccessMessage
+                        });
+                        // if deleted tag is prviously searched then remove that tag url from save state of tab.
+                        var searchUrl = Globals.saveApplicationState.tabState.searchUrl;
+                        var urlObj = Utils.getUrlState.getQueryParams(searchUrl);
+                        if (urlObj && urlObj.tag && urlObj.tag === that.tagName) {
+                            Globals.saveApplicationState.tabState.searchUrl = "#!/search";
+                        }
+                        that.collection.remove(deleteTagData);
+                        // to update tag list of search tab fetch typeHeaders.
+                        that.typeHeaders.fetch({ reset: true });
+                    }
                 });
             }
         });

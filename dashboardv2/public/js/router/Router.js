@@ -22,12 +22,14 @@ define([
     'backbone',
     'App',
     'utils/Globals',
-    'utils/Utils'
-], function($, _, Backbone, App, Globals, Utils) {
+    'utils/Utils',
+    'utils/UrlLinks',
+    'collection/VTagList'
+], function($, _, Backbone, App, Globals, Utils, UrlLinks, VTagList) {
     var AppRouter = Backbone.Router.extend({
         routes: {
             // Define some URL routes
-            '': 'commonAction',
+            '': 'defaultAction',
             '!/': 'tagAttributePageLoad',
             '!/tag/tagAttribute/(*name)': 'tagAttributePageLoad',
             '!/taxonomy/detailCatalog/(*url)': 'detailCatalog',
@@ -39,13 +41,18 @@ define([
             // Default
             '*actions': 'defaultAction'
         },
-        initialize: function() {
+        initialize: function(options) {
+            _.extend(this, _.pick(options, 'entityDefCollection', 'typeHeaders', 'enumDefCollection', 'classificationDefCollection'));
             this.showRegions();
             this.bindCommonEvents();
             this.listenTo(this, 'route', this.postRouteExecute, this);
-            this.globalVent = new Backbone.Wreqr.EventAggregator();
-            this.catalogVent = new Backbone.Wreqr.EventAggregator();
-            this.tagVent = new Backbone.Wreqr.EventAggregator();
+            this.searchVent = new Backbone.Wreqr.EventAggregator();
+            this.preFetchedCollectionLists = {
+                'entityDefCollection': this.entityDefCollection,
+                'typeHeaders': this.typeHeaders,
+                'enumDefCollection': this.enumDefCollection,
+                'classificationDefCollection': this.classificationDefCollection
+            }
         },
         bindCommonEvents: function() {
             var that = this;
@@ -108,18 +115,28 @@ define([
                     var paramObj = Utils.getUrlState.getQueryParams();
                     this.collection = new VCatalogList();
                     this.collection.url = url;
-                    App.rNHeader.show(new BusinessCatalogHeader({ 'globalVent': that.globalVent, 'url': url, 'collection': this.collection }));
+                    App.rNHeader.show(new BusinessCatalogHeader(
+                        _.extend({
+                            'url': url,
+                            'collection': this.collection
+                        }, that.preFetchedCollectionLists)
+                    ));
                     if (!App.rSideNav.currentView) {
-                        App.rSideNav.show(new SideNavLayoutView({ 'globalVent': that.globalVent, 'url': url }));
+                        App.rSideNav.show(new SideNavLayoutView(
+                            _.extend({
+                                'url': url
+                            }, that.preFetchedCollectionLists)
+                        ));
                     } else {
                         App.rSideNav.currentView.RBusinessCatalogLayoutView.currentView.manualRender("/" + url);
                         App.rSideNav.currentView.selectTab();
                     }
-                    App.rNContent.show(new BusinessCatalogDetailLayoutView({
-                        'globalVent': that.globalVent,
-                        'url': url,
-                        'collection': this.collection
-                    }));
+                    App.rNContent.show(new BusinessCatalogDetailLayoutView(
+                        _.extend({
+                            'url': url,
+                            'collection': this.collection
+                        }, that.preFetchedCollectionLists)
+                    ));
                     this.collection.fetch({ reset: true });
                 } else {
                     that.defaultAction()
@@ -136,19 +153,19 @@ define([
                     'collection/VEntityList'
                 ], function(Header, DetailPageLayoutView, SideNavLayoutView, VEntityList) {
                     this.entityCollection = new VEntityList([], {});
-                    App.rNHeader.show(new Header({ 'globalVent': that.globalVent }));
+                    App.rNHeader.show(new Header());
                     if (!App.rSideNav.currentView) {
-                        App.rSideNav.show(new SideNavLayoutView({ 'globalVent': that.globalVent }));
+                        App.rSideNav.show(new SideNavLayoutView(
+                            _.extend({}, that.preFetchedCollectionLists)
+                        ));
                     } else {
                         App.rSideNav.currentView.selectTab();
                     }
-
-                    App.rNContent.show(new DetailPageLayoutView({
-                        'globalVent': that.globalVent,
+                    App.rNContent.show(new DetailPageLayoutView(_.extend({
                         'collection': this.entityCollection,
                         'id': id,
-                    }));
-                    this.entityCollection.url = "/api/atlas/entities/" + id;
+                    }, that.preFetchedCollectionLists)));
+                    this.entityCollection.url = UrlLinks.entitiesApiUrl(id);
                     this.entityCollection.fetch({ reset: true });
                 });
             }
@@ -161,23 +178,48 @@ define([
                 'views/business_catalog/SideNavLayoutView',
                 'views/tag/TagDetailLayoutView',
             ], function(Header, BusinessCatalogLayoutView, SideNavLayoutView, TagDetailLayoutView) {
-                App.rNHeader.show(new Header({ 'globalVent': that.globalVent, 'vent': that.catalogVent }));
+                var paramObj = Utils.getUrlState.getQueryParams(),
+                    url = Utils.getUrlState.getQueryUrl().queyParams[0];
+                App.rNHeader.show(new Header());
                 if (!App.rSideNav.currentView) {
-                    App.rSideNav.show(new SideNavLayoutView({
-                        'globalVent': that.globalVent,
-                        'tag': tagName
-                    }));
+                    if (paramObj && paramObj.dlttag) {
+                        Utils.setUrl({
+                            url: url,
+                            trigger: false,
+                            updateTabState: function() {
+                                return { tagUrl: this.url, stateChanged: true };
+                            }
+                        });
+                    }
+                    App.rSideNav.show(new SideNavLayoutView(
+                        _.extend({
+                            'tag': tagName
+                        }, that.preFetchedCollectionLists)
+                    ));
                 } else {
-
+                    if (paramObj && paramObj.dlttag) {
+                        Utils.setUrl({
+                            url: url,
+                            trigger: false,
+                            updateTabState: function() {
+                                return { tagUrl: this.url, stateChanged: true };
+                            }
+                        });
+                    }
                     App.rSideNav.currentView.RTagLayoutView.currentView.manualRender(tagName);
                     App.rSideNav.currentView.selectTab();
                 }
-
                 if (tagName) {
-                    App.rNContent.show(new TagDetailLayoutView({
-                        'globalVent': that.globalVent,
-                        'tag': tagName
-                    }));
+                    // updating paramObj to check for new queryparam.
+                    paramObj = Utils.getUrlState.getQueryParams();
+                    if (paramObj && paramObj.dlttag) {
+                        return false;
+                    }
+                    App.rNContent.show(new TagDetailLayoutView(
+                        _.extend({
+                            'tag': tagName
+                        }, that.preFetchedCollectionLists)
+                    ));
                 }
             });
         },
@@ -187,12 +229,16 @@ define([
                 'views/site/Header',
                 'views/business_catalog/BusinessCatalogLayoutView',
                 'views/business_catalog/SideNavLayoutView',
-            ], function(Header, BusinessCatalogLayoutView, SideNavLayoutView) {
-                App.rNHeader.show(new Header({ 'globalVent': that.globalVent }));
+                'views/search/SearchDetailLayoutView',
+            ], function(Header, BusinessCatalogLayoutView, SideNavLayoutView, SearchDetailLayoutView) {
+                var paramObj = Utils.getUrlState.getQueryParams();
+                App.rNHeader.show(new Header());
                 if (!App.rSideNav.currentView) {
-                    App.rSideNav.show(new SideNavLayoutView({
-                        'globalVent': that.globalVent
-                    }));
+                    App.rSideNav.show(new SideNavLayoutView(
+                        _.extend({
+                            'searchVent': that.searchVent
+                        }, that.preFetchedCollectionLists)
+                    ));
                 } else {
                     App.rSideNav.currentView.selectTab();
                     if (Utils.getUrlState.isTagTab()) {
@@ -201,8 +247,18 @@ define([
                         App.rSideNav.currentView.RBusinessCatalogLayoutView.currentView.manualRender(undefined, true);
                     }
                 }
-                App.rNContent.$el.html('');
-                App.rNContent.destroy();
+                if (Globals.entityCreate && Utils.getUrlState.isSearchTab()) {
+                    App.rNContent.show(new SearchDetailLayoutView(
+                        _.extend({
+                            'value': paramObj,
+                            'initialView': true,
+                            'searchVent': that.searchVent
+                        }, that.preFetchedCollectionLists)
+                    ));
+                } else {
+                    App.rNContent.$el.html("");
+                    App.rNContent.destroy();
+                }
             });
         },
         searchResult: function() {
@@ -214,43 +270,37 @@ define([
                 'views/search/SearchDetailLayoutView'
             ], function(Header, BusinessCatalogLayoutView, SideNavLayoutView, SearchDetailLayoutView) {
                 var paramObj = Utils.getUrlState.getQueryParams();
-                App.rNHeader.show(new Header({ 'globalVent': that.globalVent, 'vent': that.catalogVent }));
+                App.rNHeader.show(new Header());
                 if (!App.rSideNav.currentView) {
-                    App.rSideNav.show(new SideNavLayoutView({
-                        'globalVent': that.globalVent,
-                        'value': paramObj
-                    }));
+                    App.rSideNav.show(new SideNavLayoutView(
+                        _.extend({
+                            'value': paramObj,
+                            'searchVent': that.searchVent
+                        }, that.preFetchedCollectionLists)
+                    ));
                 } else {
                     App.rSideNav.currentView.RSearchLayoutView.currentView.manualRender(paramObj);
                 }
                 App.rSideNav.currentView.selectTab();
-                App.rNContent.show(new SearchDetailLayoutView({
-                    'globalVent': that.globalVent,
-                    'value': paramObj
-                }));
+                App.rNContent.show(new SearchDetailLayoutView(
+                    _.extend({
+                        'value': paramObj,
+                        'searchVent': that.searchVent,
+                        'initialView': (paramObj.type || (paramObj.dslChecked == "true" ? "" : paramObj.tag) || (paramObj.query ? paramObj.query.trim() : "")).length === 0
+                    }, that.preFetchedCollectionLists)
+                ));
             });
         },
         defaultAction: function(actions) {
             // We have no matching route, lets just log what the URL was
-            if (Globals.taxonomy) {
-                Utils.setUrl({
-                    url: '#!/taxonomy',
-                    mergeBrowserUrl: false,
-                    updateTabState: function() {
-                        return { taxonomyUrl: this.url, stateChanged: false };
-                    },
-                    trigger: true
-                });
-            } else {
-                Utils.setUrl({
-                    url: '#!/tag',
-                    mergeBrowserUrl: false,
-                    updateTabState: function() {
-                        return { tagUrl: this.url, stateChanged: false };
-                    },
-                    trigger: true
-                });
-            }
+            Utils.setUrl({
+                url: '#!/search',
+                mergeBrowserUrl: false,
+                updateTabState: function() {
+                    return { searchUrl: this.url, stateChanged: false };
+                },
+                trigger: true
+            });
 
             console.log('No route:', actions);
         }

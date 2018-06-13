@@ -18,13 +18,11 @@
 
 package org.apache.atlas.repository.graph;
 
-import com.thinkaurelius.titan.core.TitanGraph;
-import org.apache.atlas.ApplicationProperties;
 import org.apache.atlas.setup.SetupException;
 import org.apache.atlas.setup.SetupStep;
-import org.apache.commons.configuration.Configuration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
 
 /**
  * A {@link SetupStep} that initializes the Graph backend for Atlas.
@@ -32,6 +30,7 @@ import org.slf4j.LoggerFactory;
  * This class will initialize the specific backend implementation specified in
  * the Atlas configuration for the key atlas.graph.storage.backend.
  */
+@Component
 public class GraphSchemaInitializer implements SetupStep {
 
     private static final Logger LOG = LoggerFactory.getLogger(GraphSchemaInitializer.class);
@@ -41,7 +40,7 @@ public class GraphSchemaInitializer implements SetupStep {
         LOG.info("Initializing graph schema backend.");
         try {
             // The implementation of this method internally creates the schema.
-            TitanGraphProvider.getGraphInstance();
+            AtlasGraphProvider.getGraphInstance();
             LOG.info("Completed initializing graph schema backend.");
         } catch (Exception e) {
             LOG.error("Could not initialize graph schema backend due to exception, {}", e.getMessage(), e);

@@ -21,22 +21,26 @@ package org.apache.atlas.service;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.inject.Inject;
-import com.thinkaurelius.titan.core.TitanGraph;
-import com.thinkaurelius.titan.core.util.TitanCleanup;
 import org.apache.atlas.AtlasClient;
 import org.apache.atlas.AtlasException;
 import org.apache.atlas.EntityAuditEvent;
-import org.apache.atlas.RepositoryMetadataModule;
+import org.apache.atlas.TestModules;
 import org.apache.atlas.RequestContext;
 import org.apache.atlas.TestUtils;
 import org.apache.atlas.discovery.graph.GraphBackedDiscoveryService;
+import org.apache.atlas.exception.AtlasBaseException;
+import org.apache.atlas.listener.ChangedTypeDefs;
 import org.apache.atlas.listener.EntityChangeListener;
+import org.apache.atlas.listener.TypeDefChangeListener;
+import org.apache.atlas.model.legacy.EntityResult;
 import org.apache.atlas.query.QueryParams;
 import org.apache.atlas.repository.audit.EntityAuditRepository;
 import org.apache.atlas.repository.audit.HBaseBasedAuditRepository;
 import org.apache.atlas.repository.audit.HBaseTestUtils;
-import org.apache.atlas.repository.graph.GraphProvider;
+import org.apache.atlas.repository.graph.AtlasGraphProvider;
+import org.apache.atlas.services.DefaultMetadataService;
 import org.apache.atlas.services.MetadataService;
+import org.apache.atlas.type.AtlasTypeUtil;
 import org.apache.atlas.typesystem.IReferenceableInstance;
 import org.apache.atlas.typesystem.IStruct;
 import org.apache.atlas.typesystem.ITypedReferenceableInstance;
@@ -56,6 +60,7 @@ import org.apache.atlas.typesystem.types.HierarchicalTypeDefinition;
 import org.apache.atlas.typesystem.types.Multiplicity;
 import org.apache.atlas.typesystem.types.TypeSystem;
 import org.apache.atlas.typesystem.types.ValueConversionException;
+import org.apache.atlas.typesystem.types.cache.TypeCache;
 import org.apache.atlas.typesystem.types.utils.TypesUtil;
 import org.apache.atlas.utils.ParamChecker;
 import org.apache.commons.lang.RandomStringUtils;
@@ -71,34 +76,22 @@ import org.testng.annotations.Test;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import static org.apache.atlas.TestUtils.COLUMNS_ATTR_NAME;
-import static org.apache.atlas.TestUtils.COLUMN_TYPE;
-import static org.apache.atlas.TestUtils.PII;
-import static org.apache.atlas.TestUtils.TABLE_TYPE;
-import static org.apache.atlas.TestUtils.createColumnEntity;
-import static org.apache.atlas.TestUtils.createDBEntity;
-import static org.apache.atlas.TestUtils.createInstance;
-import static org.apache.atlas.TestUtils.createTableEntity;
-import static org.apache.atlas.TestUtils.randomString;
+import static org.apache.atlas.TestUtils.*;
 import static org.apache.atlas.typesystem.types.utils.TypesUtil.createClassTypeDef;
 import static org.apache.atlas.typesystem.types.utils.TypesUtil.createOptionalAttrDef;
-import static org.testng.Assert.assertEquals;
-import static org.testng.Assert.assertNotNull;
-import static org.testng.Assert.assertNull;
-import static org.testng.Assert.assertTrue;
-import static org.testng.Assert.fail;
+import static org.testng.Assert.*;
 
-@Guice(modules = RepositoryMetadataModule.class)
+@Guice(modules = TestModules.TestOnlyModule.class)
 public class DefaultMetadataServiceTest {
     @Inject
     private MetadataService metadataService;
 
-    @Inject
-    private GraphProvider<TitanGraph> graphProvider;
+    private TypeDefChangeListener typeDefChangeListener;
 
     @Inject
     private EntityAuditRepository auditRepository;
@@ -111,17 +104,21 @@ public class DefaultMetadataServiceTest {
     private Referenceable table;
 
     private Id tableId;
-    
+
     private final String NAME = "name";
 
 
     @BeforeTest
     public void setUp() throws Exception {
+
+        typeDefChangeListener = (DefaultMetadataService)metadataService;
+        metadataService = TestUtils.addSessionCleanupWrapper(metadataService);
+
         if (auditRepository instanceof HBaseBasedAuditRepository) {
             HBaseTestUtils.startCluster();
             ((HBaseBasedAuditRepository) auditRepository).start();
         }
-        RequestContext.createContext();
+        TestUtils.resetRequestContext();
         RequestContext.get().setUser("testuser");
 
         TypesDef typesDef = TestUtils.defineHiveTypes();
@@ -142,33 +139,26 @@ public class DefaultMetadataServiceTest {
 
     @AfterTest
     public void shutdown() throws Exception {
-        TypeSystem.getInstance().reset();
         try {
-            //TODO - Fix failure during shutdown while using BDB
-            graphProvider.get().shutdown();
-        } catch(Exception e) {
-            e.printStackTrace();
-        }
-        try {
-            TitanCleanup.clear(graphProvider.get());
-        } catch(Exception e) {
-            e.printStackTrace();
-        }
+            TypeSystem.getInstance().reset();
 
-        if (auditRepository instanceof HBaseBasedAuditRepository) {
-            ((HBaseBasedAuditRepository) auditRepository).stop();
-            HBaseTestUtils.stopCluster();
+            if (auditRepository instanceof HBaseBasedAuditRepository) {
+                ((HBaseBasedAuditRepository) auditRepository).stop();
+                HBaseTestUtils.stopCluster();
+            }
+        }
+        finally {
+            AtlasGraphProvider.cleanup();
         }
     }
-
-    private AtlasClient.EntityResult updateInstance(Referenceable entity) throws Exception {
+    private EntityResult updateInstance(Referenceable entity) throws Exception {
         RequestContext.createContext();
         ParamChecker.notNull(entity, "Entity");
         ParamChecker.notNull(entity.getId(), "Entity");
         String entityjson = InstanceSerialization.toJson(entity, true);
         JSONArray entitiesJson = new JSONArray();
         entitiesJson.put(entityjson);
-        return metadataService.updateEntities(entitiesJson.toString());
+        return metadataService.updateEntities(entitiesJson.toString()).getEntityResult();
     }
 
     @Test(expectedExceptions = TypeNotFoundException.class)
@@ -207,7 +197,7 @@ public class DefaultMetadataServiceTest {
         String arrayAttrName = randomStrWithReservedChars();
         String mapAttrName = randomStrWithReservedChars();
         HierarchicalTypeDefinition<ClassType> typeDefinition =
-                createClassTypeDef(randomStrWithReservedChars(), ImmutableSet.<String>of(),
+                createClassTypeDef("test_type_"+ RandomStringUtils.randomAlphanumeric(10), ImmutableSet.<String>of(),
                         createOptionalAttrDef(strAttrName, DataTypes.STRING_TYPE),
                         new AttributeDefinition(arrayAttrName, DataTypes.arrayTypeName(DataTypes.STRING_TYPE.getName()),
                                 Multiplicity.OPTIONAL, false, null),
@@ -219,7 +209,7 @@ public class DefaultMetadataServiceTest {
         //verify that entity can be created with reserved characters in string value, array value and map key and value
         Referenceable entity = new Referenceable(typeDefinition.typeName);
         entity.set(strAttrName, randomStrWithReservedChars());
-        entity.set(arrayAttrName, new String[]{randomStrWithReservedChars()});
+        entity.set(arrayAttrName, new ArrayList<String>() {{ add(randomStrWithReservedChars()); }});
         entity.set(mapAttrName, new HashMap<String, String>() {{
             put(randomStrWithReservedChars(), randomStrWithReservedChars());
         }});
@@ -227,7 +217,7 @@ public class DefaultMetadataServiceTest {
 
         //Verify that get entity definition returns actual values with reserved characters
         Referenceable instance =
-                InstanceSerialization.fromJsonReferenceable(metadataService.getEntityDefinition(id), true);
+                InstanceSerialization.fromJsonReferenceable(metadataService.getEntityDefinitionJson(id), true);
         assertReferenceableEquals(instance, entity);
 
         //Verify that search with reserved characters works - for string attribute
@@ -248,7 +238,7 @@ public class DefaultMetadataServiceTest {
 
         Referenceable newActual = new Referenceable(expected.getId(), actual.getTypeName(), actual.getValuesMap(),
                 traits, traitsMap);
-        assertEquals(InstanceSerialization.toJson(newActual, true), InstanceSerialization.toJson(expected, true));
+        assertEquals(newActual, expected);
     }
 
     private String randomStrWithReservedChars() {
@@ -269,10 +259,9 @@ public class DefaultMetadataServiceTest {
         assertEquals(traits.get(0), PII);
 
         //getTrait
-        String traitDefinition = metadataService.getTraitDefinition(id, PII);
-        Struct traitResult = InstanceSerialization.fromJsonStruct(traitDefinition, true);
-        Assert.assertNotNull(traitResult);
-        assertEquals(traitResult.getValuesMap().size(), 0);
+        IStruct traitDefinition = metadataService.getTraitDefinition(id, PII);
+        Assert.assertNotNull(traitDefinition);
+        assertEquals(traitDefinition.getValuesMap().size(), 0);
 
         //delete trait
         metadataService.deleteTrait(id, PII);
@@ -308,7 +297,7 @@ public class DefaultMetadataServiceTest {
         assertAuditEvents(id, EntityAuditEvent.EntityAuditAction.ENTITY_DELETE);
     }
 
-    private AtlasClient.EntityResult deleteEntities(String... guids) throws AtlasException {
+    private EntityResult deleteEntities(String... guids) throws AtlasException {
         RequestContext.createContext();
         return metadataService.deleteEntities(Arrays.asList(guids));
     }
@@ -541,9 +530,9 @@ public class DefaultMetadataServiceTest {
         assertEquals(actualColumns, updatedColNameList);
     }
 
-    private AtlasClient.EntityResult updateEntityPartial(String guid, Referenceable entity) throws AtlasException {
+    private EntityResult updateEntityPartial(String guid, Referenceable entity) throws AtlasException {
         RequestContext.createContext();
-        return metadataService.updateEntityPartialByGuid(guid, entity);
+        return metadataService.updateEntityPartialByGuid(guid, entity).getEntityResult();
     }
 
     @Test
@@ -559,7 +548,7 @@ public class DefaultMetadataServiceTest {
             put(COLUMNS_ATTR_NAME, columns);
         }});
 
-        AtlasClient.EntityResult entityResult = updateEntityPartial(tableId._getId(), tableUpdated);
+        EntityResult entityResult = updateEntityPartial(tableId._getId(), tableUpdated);
         assertEquals(entityResult.getCreatedEntities().size(), 1);  //col1 created
         assertEquals(entityResult.getUpdateEntities().size(), 1);  //table updated
         assertEquals(entityResult.getUpdateEntities().get(0), tableId._getId());
@@ -651,8 +640,8 @@ public class DefaultMetadataServiceTest {
         List<Referenceable> actualArray = (List<Referenceable>) entityDefinition.get(arrAttrName);
         if (expectedArray == null && actualArray != null) {
             //all are marked as deleted in case of soft delete
-            for (int index = 0; index < actualArray.size(); index++) {
-                assertEquals(actualArray.get(index).getId().state, Id.EntityState.DELETED);
+            for (Referenceable referenceable : actualArray) {
+                assertEquals(referenceable.getId().state, Id.EntityState.DELETED);
             }
         } else if(expectedArray == null) {
             //hard delete case
@@ -700,7 +689,7 @@ public class DefaultMetadataServiceTest {
         serdeInstance.setNull("description");
         updateInstance(table);
         tableDefinitionJson =
-            metadataService.getEntityDefinition(tableId._getId());
+            metadataService.getEntityDefinitionJson(tableId._getId());
         tableDefinition = InstanceSerialization.fromJsonReferenceable(tableDefinitionJson, true);
         Assert.assertNull(((Struct) tableDefinition.get("serde1")).get("description"));
     }
@@ -740,7 +729,7 @@ public class DefaultMetadataServiceTest {
         metadataService.updateEntityAttributeByGuid(tableId._getId(), "database", dbId);
 
         String tableDefinitionJson =
-            metadataService.getEntityDefinition(tableId._getId());
+            metadataService.getEntityDefinitionJson(tableId._getId());
         Referenceable tableDefinition = InstanceSerialization.fromJsonReferenceable(tableDefinitionJson, true);
 
         assertEquals(dbId, (((Id) tableDefinition.get("database"))._getId()));
@@ -764,14 +753,14 @@ public class DefaultMetadataServiceTest {
         Referenceable dbDef = InstanceSerialization.fromJsonReferenceable(dbDefJson, true);
 
         Assert.assertNotEquals(dbId, (((Id) tableDefinitionActual.get("database"))._getId()));
-        Assert.assertEquals(dbDef.getId()._getId(), (((Id) tableDefinitionActual.get("database"))._getId())); */
+        Assert.assertEquals(dbDef.getObjectId()._getId(), (((Id) tableDefinitionActual.get("database"))._getId())); */
 
     }
 
     @Test
     public void testArrayOfStructs() throws Exception {
         //Add array of structs
-        TestUtils.dumpGraph(graphProvider.get());
+        TestUtils.dumpGraph(TestUtils.getGraph());
 
         final Struct partition1 = new Struct(TestUtils.PARTITION_STRUCT_TYPE);
         partition1.set(NAME, "part1");
@@ -872,6 +861,16 @@ public class DefaultMetadataServiceTest {
         }
     }
 
+    @Test(expectedExceptions = ValueConversionException.class)
+    public void testCreateRequiredAttrNull() throws Exception {
+        //Update required attribute
+
+        Referenceable tableEntity = new Referenceable(TABLE_TYPE);
+        tableEntity.set(NAME, "table_" + TestUtils.randomString());
+
+        TestUtils.createInstance(metadataService, tableEntity);
+        Assert.fail("Expected exception while creating with required attribute null");
+    }
 
     @Test(expectedExceptions = ValueConversionException.class)
     public void testUpdateRequiredAttrToNull() throws Exception {
@@ -888,6 +887,54 @@ public class DefaultMetadataServiceTest {
     }
 
     @Test
+    public void testCheckOptionalAttrValueRetention() throws Exception {
+
+        Referenceable entity = createDBEntity();
+
+        String dbId = TestUtils.createInstance(metadataService, entity);
+
+        entity = getEntity(dbId);
+
+        //The optional boolean attribute should have a non-null value
+        final String isReplicatedAttr = "isReplicated";
+        final String paramsAttr = "parameters";
+        Assert.assertNotNull(entity.get(isReplicatedAttr));
+        Assert.assertEquals(entity.get(isReplicatedAttr), Boolean.FALSE);
+        Assert.assertNull(entity.get(paramsAttr));
+
+        //Update to true
+        entity.set(isReplicatedAttr, Boolean.TRUE);
+        //Update array
+        final HashMap<String, String> params = new HashMap<String, String>() {{ put("param1", "val1"); put("param2", "val2"); }};
+        entity.set(paramsAttr, params);
+        //Complete update
+        updateInstance(entity);
+
+        entity = getEntity(dbId);
+
+        Assert.assertNotNull(entity.get(isReplicatedAttr));
+        Assert.assertEquals(entity.get(isReplicatedAttr), Boolean.TRUE);
+        Assert.assertEquals(entity.get(paramsAttr), params);
+
+        //Complete update without setting the attribute
+        Referenceable newEntity = createDBEntity();
+        //Reset name to the current DB name
+        newEntity.set(NAME, entity.get(NAME));
+        updateInstance(newEntity);
+
+        entity = getEntity(dbId);
+        Assert.assertNotNull(entity.get(isReplicatedAttr));
+        Assert.assertEquals(entity.get(isReplicatedAttr), Boolean.TRUE);
+        Assert.assertEquals(entity.get(paramsAttr), params);
+    }
+
+    private Referenceable getEntity(String guid) throws AtlasException {
+        String entityJson = metadataService.getEntityDefinitionJson(guid);
+        Assert.assertNotNull(entityJson);
+        return InstanceSerialization.fromJsonReferenceable(entityJson, true);
+    }
+
+    @Test
     public void testUpdateOptionalAttrToNull() throws Exception {
         String tableDefinitionJson =
             metadataService.getEntityDefinition(TestUtils.TABLE_TYPE, NAME, (String) table.get(NAME));
@@ -896,7 +943,7 @@ public class DefaultMetadataServiceTest {
         //Update optional Attribute
         Assert.assertNotNull(tableDefinition.get("created"));
         //Update optional attribute
-            table.setNull("created");
+        table.setNull("created");
 
         String newtableId = updateInstance(table).getUpdateEntities().get(0);
         assertEquals(newtableId, tableId._getId());
@@ -974,7 +1021,7 @@ public class DefaultMetadataServiceTest {
 
         //Delete one column
         String columnId = table1Columns.get(0).getId()._getId();
-        AtlasClient.EntityResult entityResult = deleteEntities(columnId);
+        EntityResult entityResult = deleteEntities(columnId);
         //column is deleted and table is updated
         assertEquals(entityResult.getDeletedEntities().get(0), columnId);
         assertEquals(entityResult.getUpdateEntities().get(0), table1Entity.getId()._getId());
@@ -1093,6 +1140,22 @@ public class DefaultMetadataServiceTest {
     }
 
     @Test
+    public void testTypeWithDotsCreationShouldNotBeCreated() throws AtlasException, JSONException {
+        String typeName = "test_.v1_type_XXXX";
+        HierarchicalTypeDefinition<ClassType> typeDef = TypesUtil.createClassTypeDef(
+                typeName, ImmutableSet.<String>of(),
+                TypesUtil.createUniqueRequiredAttrDef("test_type_attribute", DataTypes.STRING_TYPE));
+        TypesDef typesDef = new TypesDef(typeDef, false);
+
+        try {
+            metadataService.createType(TypesSerialization.toJson(typesDef));
+            fail("Expected IllegalArgumentException");
+        } catch (IllegalArgumentException e) {
+            assertTrue (e.getCause().getMessage().contains(AtlasTypeUtil.getInvalidTypeNameErrorMessage()), e.getCause().getMessage());
+        }
+    }
+
+    @Test
     public void testAuditEventsInvalidParams() throws Exception {
         //entity id can't be null
         try {
@@ -1143,17 +1206,38 @@ public class DefaultMetadataServiceTest {
         }
     }
 
+    @Test
+    public void testOnChangeRefresh() {
+        try {
+            List<String> beforeChangeTypeNames = new ArrayList<>();
+            beforeChangeTypeNames.addAll(metadataService.getTypeNames(new HashMap<TypeCache.TYPE_FILTER, String>()));
+
+            typeDefChangeListener.onChange(new ChangedTypeDefs());
+
+            List<String> afterChangeTypeNames = new ArrayList<>();
+            afterChangeTypeNames.addAll(metadataService.getTypeNames(new HashMap<TypeCache.TYPE_FILTER, String>()));
+
+            Collections.sort(beforeChangeTypeNames);
+            Collections.sort(afterChangeTypeNames);
+            assertEquals(afterChangeTypeNames, beforeChangeTypeNames);
+        } catch (AtlasBaseException e) {
+            fail("Should've succeeded", e);
+        } catch (AtlasException e) {
+            fail("getTypeNames should've succeeded", e);
+        }
+    }
+
     private static class EntitiesChangeListener implements EntityChangeListener {
         private List<String> deletedEntities = new ArrayList<>();
         private List<String> updatedEntities = new ArrayList<>();
 
         @Override
-        public void onEntitiesAdded(Collection<ITypedReferenceableInstance> entities)
+        public void onEntitiesAdded(Collection<ITypedReferenceableInstance> entities, boolean isImport)
             throws AtlasException {
         }
 
         @Override
-        public void onEntitiesUpdated(Collection<ITypedReferenceableInstance> entities)
+        public void onEntitiesUpdated(Collection<ITypedReferenceableInstance> entities, boolean isImport)
             throws AtlasException {
             updatedEntities.clear();
             for (ITypedReferenceableInstance entity : entities) {
@@ -1162,24 +1246,29 @@ public class DefaultMetadataServiceTest {
         }
 
         @Override
-        public void onTraitAdded(ITypedReferenceableInstance entity, IStruct trait)
+        public void onTraitsAdded(ITypedReferenceableInstance entity, Collection<? extends IStruct> traits)
             throws AtlasException {
         }
 
         @Override
-        public void onTraitDeleted(ITypedReferenceableInstance entity, String traitName)
+        public void onTraitsDeleted(ITypedReferenceableInstance entity, Collection<String> traitNames)
             throws AtlasException {
         }
 
         @Override
-        public void onEntitiesDeleted(Collection<ITypedReferenceableInstance> entities)
+        public void onTraitsUpdated(ITypedReferenceableInstance entity, Collection<? extends IStruct> traits)
+            throws AtlasException {
+        }
+
+        @Override
+        public void onEntitiesDeleted(Collection<ITypedReferenceableInstance> entities, boolean isImport)
             throws AtlasException {
             deletedEntities.clear();
             for (ITypedReferenceableInstance entity : entities) {
                 deletedEntities.add(entity.getId()._getId());
             }
         }
-        
+
         public List<String> getDeletedEntities() {
             return deletedEntities;
         }

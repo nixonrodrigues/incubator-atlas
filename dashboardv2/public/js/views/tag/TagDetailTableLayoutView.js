@@ -43,6 +43,7 @@ define(['require',
                 detailValue: "[data-id='detailValue']",
                 addTag: "[data-id='addTag']",
                 deleteTag: "[data-id='delete']",
+                editTag: "[data-id='edit']",
             },
             /** ui events hash */
             events: function() {
@@ -53,6 +54,9 @@ define(['require',
                 events["click " + this.ui.deleteTag] = function(e) {
                     this.deleteTagDataModal(e);
                 };
+                events["click " + this.ui.editTag] = function(e) {
+                    this.editTagDataModal(e);
+                };
                 return events;
             },
             /**
@@ -60,10 +64,10 @@ define(['require',
              * @constructs
              */
             initialize: function(options) {
-                _.extend(this, _.pick(options, 'globalVent', 'collection', 'guid', 'term', 'assetName'));
-                this.collectionObject = this.collection.toJSON();
+                _.extend(this, _.pick(options, 'entity', 'guid', 'term', 'entityName', 'fetchCollection', 'enumDefCollection', 'classificationDefCollection'));
+                this.collectionObject = this.entity;
                 this.tagTermCollection = new VTagList();
-                var tagorterm = _.toArray(this.collectionObject[0].traits),
+                var tagorterm = _.toArray(this.collectionObject.classifications),
                     tagTermList = [],
                     that = this;
                 _.each(tagorterm, function(object) {
@@ -102,7 +106,6 @@ define(['require',
                 require(['utils/TableLayout'], function(TableLayout) {
                     var cols = new Backgrid.Columns(that.getSchemaTableColumns());
                     that.RTagTermTableLayoutView.show(new TableLayout(_.extend({}, that.commonTableOptions, {
-                        globalVent: that.globalVent,
                         columns: cols
                     })));
                 });
@@ -130,16 +133,25 @@ define(['require',
                             sortable: false,
                             formatter: _.extend({}, Backgrid.CellFormatter.prototype, {
                                 fromRaw: function(rawValue, model) {
-                                    var values = model.get('values'),
-                                        tagValue = 'NA';
-                                    if (!_.isEmpty(values)) {
-                                        var stringArr = [];
-                                        tagValue = "";
-                                        _.each(values, function(val, key) {
-                                            var attrName = "<span>" + key + ":" + val + "</span>";
-                                            stringArr.push(attrName);
+                                    var values = model.get('attributes');
+                                    var data = that.classificationDefCollection.findWhere({ 'name': model.get('typeName') });
+                                    var attributeDefs = Utils.getNestedSuperTypeObj({ data: data.toJSON(), collection: that.classificationDefCollection, attrMerge: true });
+                                    var tagValue = 'NA',
+                                        dataType;
+                                    if (!_.isEmpty(attributeDefs)) {
+                                        var stringValue = "";
+                                        _.each(_.sortBy(_.map(attributeDefs, function(obj) {
+                                            obj['sortKey'] = obj.name && _.isString(obj.name) ? obj.name.toLowerCase() : "-";
+                                            return obj;
+                                        }), 'sortKey'), function(sortedObj) {
+                                            var val = _.isNull(values[sortedObj.name]) ? "-" : values[sortedObj.name],
+                                                key = sortedObj.name;
+                                            if (sortedObj.typeName === "date") {
+                                                val = new Date(val)
+                                            }
+                                            stringValue += "<tr><td class='html-cell string-cell renderable'>" + _.escape(key) + "</td><td class='html-cell string-cell renderable' data-type=" + sortedObj.typeName + ">" + _.escape(val) + "</td>";
                                         });
-                                        tagValue += stringArr.join(", ");
+                                        tagValue = "<div class='mainAttrTable'><table class='attriTable'><tr><th class='html-cell string-cell renderable'>Name</th><th class='html-cell string-cell renderable'>Value</th>" + stringValue + "</table></div>";
                                     }
                                     return tagValue;
                                 }
@@ -152,11 +164,16 @@ define(['require',
                             sortable: false,
                             formatter: _.extend({}, Backgrid.CellFormatter.prototype, {
                                 fromRaw: function(rawValue, model) {
-                                    return '<a href="javascript:void(0)"><i class="fa fa-trash" data-id="delete" data-name="' + model.get('typeName') + '"></i></a>';
+                                    var deleteData = '<button class="btn btn-atlasAction btn-atlas no-margin-bottom typeLOV" data-id="delete" data-name="' + model.get('typeName') + '"><i class="fa fa-trash"></i></button>',
+                                        editData = '<button class="btn btn-atlasAction btn-atlas no-margin-bottom typeLOV" data-id="edit" data-name="' + model.get('typeName') + '"><i class="fa fa-pencil"></i></button>';
+                                    if (model.get('attributes') === undefined) {
+                                        return deleteData;
+                                    } else {
+                                        return deleteData + editData;
+                                    }
                                 }
                             })
                         },
-
                     },
                     this.tagTermCollection);
             },
@@ -164,9 +181,9 @@ define(['require',
                 var that = this;
                 require(['views/tag/addTagModalView'], function(AddTagModalView) {
                     var view = new AddTagModalView({
-                        vent: that.vent,
                         guid: that.guid,
-                        modalCollection: that.collection
+                        modalCollection: that.collection,
+                        enumDefCollection: that.enumDefCollection
                     });
                     // view.saveTagData = function() {
                     //override saveTagData function
@@ -178,13 +195,13 @@ define(['require',
                     that = this;
                 if (that.term) {
                     var modal = CommonViewFunction.deleteTagModel({
-                        msg: "<div class='ellipsis'>Remove: " + "<b>" + tagName + "</b> assignment from" + " " + "<b>" + this.assetName + "?</b></div>",
+                        msg: "<div class='ellipsis'>Remove: " + "<b>" + _.escape(tagName) + "</b> assignment from" + " " + "<b>" + this.entityName + "?</b></div>",
                         titleMessage: Messages.removeTerm,
                         buttonText: "Remove",
                     });
                 } else {
                     var modal = CommonViewFunction.deleteTagModel({
-                        msg: "<div class='ellipsis'>Remove: " + "<b>" + tagName + "</b> assignment from" + " " + "<b>" + this.assetName + "?</b></div>",
+                        msg: "<div class='ellipsis'>Remove: " + "<b>" + _.escape(tagName) + "</b> assignment from" + " " + "<b>" + this.entityName + "?</b></div>",
                         titleMessage: Messages.removeTag,
                         buttonText: "Remove",
                     });
@@ -204,10 +221,38 @@ define(['require',
                     'tagName': tagName,
                     'guid': that.guid,
                     'tagOrTerm': (that.term ? "term" : "tag"),
-                    callback: function() {
+                    showLoader: function() {
                         that.$('.fontLoader').show();
-                        that.collection.fetch({ reset: true });
+                        that.$('.tableOverlay').show();
+                    },
+                    hideLoader: function() {
+                        that.$('.fontLoader').hide();
+                        that.$('.tableOverlay').hide();
+                    },
+                    callback: function() {
+                        this.hideLoader();
+                        if (that.fetchCollection) {
+                            that.fetchCollection();
+                        }
+
                     }
+                });
+            },
+            editTagDataModal: function(e) {
+                var that = this,
+                    tagName = $(e.currentTarget).data('name'),
+                    tagModel = _.findWhere(that.collectionObject.classifications, { typeName: tagName });
+                require([
+                    'views/tag/addTagModalView'
+                ], function(AddTagModalView) {
+                    var view = new AddTagModalView({
+                        'tagModel': tagModel,
+                        callback: function() {
+                            that.fetchCollection();
+                        },
+                        guid: that.guid,
+                        'enumDefCollection': that.enumDefCollection
+                    });
                 });
             }
         });

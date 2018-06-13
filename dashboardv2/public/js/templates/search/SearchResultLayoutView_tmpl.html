@@ -14,24 +14,42 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
 -->
-<div class="row">
+<div class="">
+    <div class="tableOverlay"></div>
+    <!-- Not for table Loader its only for initial loading -->
     <div class="fontLoader">
         <i class="fa fa-refresh fa-spin-custom"></i>
     </div>
-    <div class="ellipsis"><span class="searchResult" style=" font-size: 16px;"></span></div>
+    <div class="ellipsis" style="display: none;"><span class="searchResult" style=" font-size: 16px;"></span>
+        <a href="javascript:void(0)" class="inputAssignTag multiSelectTerm btnAssign" style="display:none" data-id="addTerm"><i class="fa fa-folder-o"></i> Assign Term</a>
+        <a href="javascript:void(0)" class="inputAssignTag multiSelectTag assignTag btnAssign" style="display:none" data-id="addAssignTag"><i class="fa fa-plus"></i> Assign Tag</a>
+    </div>
     <div class="searchTable">
-        <span class="labelShowRecord pull-left" data-id="pageRecordText"></span>
-        <div data-id="paginationDiv">
+        <div data-id="containerCheckBox" style="display: none;">
+            <input type="checkbox" id="inputLabel" class="checkbox-inline" name="queryType" value="text" name="check" value="1" data-id="checkDeletedEntity" />
+            <label class="checkbox-inline" for="inputLabel">
+                <b>Include historical entities</b></label>
+        </div>
+        <span style="display: none;" class="labelShowRecord pull-left" data-id="pageRecordText"></span>
+        <div data-id="paginationDiv" style="display:none">
             <ul class="pager pull-right">
                 <li>
-                    <button class="btn" data-id="previousData" disabled=true>Previous</button>
+                    <button type="button" class="btn" data-id="previousData" disabled=true>Previous</button>
                 </li>
                 <li>
-                    <button class="btn" data-id="nextData">Next</button>
+                    <button type="button" class="btn" data-id="nextData">Next</button>
                 </li>
             </ul>
         </div>
         <div id="r_searchResultTableLayoutView">
+            {{#if entityCreate}}
+            <div class="entityLink" style="display:none">
+                <h1><b>{{searchType}}</b></h1>
+                <p class="entityLink">Search Atlas for existing entities or
+                    <a href="javascript:void(0)" data-id='createEntity'> create new entity </a>
+                </p>
+            </div>
+            {{/if}}
         </div>
     </div>
 </div>

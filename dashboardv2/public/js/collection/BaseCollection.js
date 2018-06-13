@@ -33,20 +33,18 @@ define(['require',
              * @constructs
              */
 
-            initialize: function() {},
-            bindErrorEvents: function() {
-                this.bind("error", Utils.defaultErrorHandler);
+            initialize: function() {
+                this.sort_key = 'id';
             },
-            bindRequest: function() {
-                this.bind('request', function(model, ajaxObj, collectionObj) {
-                    this.ajaxStart(model, ajaxObj, collectionObj);
-                }, this);
-                this.bind('sync', function(model, ajaxObj, collectionObj) {
-                    this.ajaxComplete(model, ajaxObj, collectionObj);
-                }, this);
+            comparator: function(key, value) {
+                key = key.get(this.sort_key);
+                value = value.get(this.sort_key);
+                return key > value ? 1 : key < value ? -1 : 0;
             },
-            ajaxStart: function(model, ajaxObj, collectionObj) {},
-            ajaxComplete: function(model, ajaxObj, collectionObj) {},
+            sortByKey: function(sortKey) {
+                this.sort_key = sortKey;
+                this.sort();
+            },
             /**
              * state required for the PageableCollection
              */
@@ -129,6 +127,7 @@ define(['require',
                 return retCols;
             },
             nonCrudOperation: function(url, requestMethod, options) {
+                var that = this;
                 options['beforeSend'] = CommonViewFunction.addRestCsrfCustomHeader;
                 return Backbone.sync.call(this, null, this, _.extend({
                     url: url,

@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 
-define(['require', 'utils/Utils', 'modules/Modal', 'utils/Messages', 'utils/Globals'], function(require, Utils, Modal, Messages, Globals) {
+define(['require', 'utils/Utils', 'modules/Modal', 'utils/Messages', 'utils/Enums'], function(require, Utils, Modal, Messages, Enums) {
     'use strict';
 
     var CommonViewFunction = {};
@@ -36,7 +36,11 @@ define(['require', 'utils/Utils', 'modules/Modal', 'utils/Messages', 'utils/Glob
         require(['models/VTag'], function(VTag) {
             var tagModel = new VTag();
             if (options && options.guid && options.tagName) {
-                tagModel.deleteTag(options.guid, options.tagName, {
+                if (options.showLoader) {
+                    options.showLoader();
+                }
+                tagModel.deleteAssociation(options.guid, options.tagName, {
+                    skipDefaultError: true,
                     success: function(data) {
                         var msg = "Tag " + name.name + Messages.removeSuccessMessage;
                         if (options.tagOrTerm === "term") {
@@ -55,125 +59,120 @@ define(['require', 'utils/Utils', 'modules/Modal', 'utils/Messages', 'utils/Glob
                         }
 
                     },
-                    error: function(error, data, status) {
+                    cust_error: function(model, response) {
                         var message = options.tagName + Messages.deleteErrorMessage;
-                        if (data.error) {
-                            message = data.error;
+                        if (response && response.responseJSON) {
+                            message = response.responseJSON.errorMessage;
+                        }
+                        if (options.hideLoader) {
+                            options.hideLoader();
                         }
                         Utils.notifyError({
                             content: message
                         });
-                    },
-                    complete: function() {}
+                    }
                 });
             }
         });
     };
-    CommonViewFunction.propertyTable = function(valueObject, scope, searchTable) {
+    CommonViewFunction.propertyTable = function(options) {
+        var scope = options.scope,
+            valueObject = options.valueObject,
+            extractJSON = options.extractJSON,
+            isTable = _.isUndefined(options.isTable) ? true : options.isTable,
+            attributeDefs = options.attributeDefs;
+
         var table = "",
             fetchInputOutputValue = function(id) {
                 var that = this;
-                if (searchTable) {
-                    ++scope.fetchList
-                }
                 scope.entityModel.getEntity(id, {
-                    success: function(data) {
+                    success: function(serverData) {
                         var value = "",
-                            deleteButton = "";
-                        if (data.definition.values.name) {
-                            value = data.definition.values.name;
-                        } else if (data.definition.values.qualifiedName) {
-                            value = data.definition.values.qualifiedName;
-                        } else if (data.definition.typeName) {
-                            value = data.definition.typeName;
-                        }
+                            deleteButton = "",
+                            data = serverData.entity;
+                        value = Utils.getName(data);
                         var id = "";
-                        if (data.definition.id) {
-                            if (_.isObject(data.definition.id) && data.definition.id.id) {
-                                id = data.definition.id.id;
-                                if (Globals.entityStateReadOnly[data.definition.id.state]) {
-                                    deleteButton += '<button title="Deleted" class="btn btn-atlasAction btn-atlas deleteBtn"><i class="fa fa-trash"></i></button>';
-                                }
-                            } else {
-                                id = data.definition.id;
+                        if (data.guid) {
+                            if (Enums.entityStateReadOnly[data.status]) {
+                                deleteButton += '<button title="Deleted" class="btn btn-atlasAction btn-atlas deleteBtn"><i class="fa fa-trash"></i></button>';
                             }
+                            id = data.guid;
                         }
                         if (value.length > 1) {
                             scope.$('td div[data-id="' + id + '"]').html('<a href="#!/detailPage/' + id + '">' + value + '</a>');
                         } else {
-                            scope.$('td div[data-id="' + id + '"]').html('<a href="#!/detailPage/' + id + '">' + id + '</a>');
+                            scope.$('td div[data-id="' + id + '"]').html('<a href="#!/detailPage/' + id + '">' + _.escape(id) + '</a>');
                         }
                         if (deleteButton.length) {
                             scope.$('td div[data-id="' + id + '"]').addClass('block readOnlyLink');
                             scope.$('td div[data-id="' + id + '"]').append(deleteButton);
                         }
                     },
-                    error: function(error, data, status) {},
-                    complete: function() {
-                        if (searchTable) {
-                            --scope.fetchList;
-                            scope.checkTableFetch();
-                        }
-                    }
+                    complete: function() {}
                 });
-            }
-        _.keys(valueObject).map(function(key) {
-            var keyValue = valueObject[key],
-                valueOfArray = [];
-            if (_.isArray(keyValue)) {
+            },
+            extractObject = function(keyValue) {
+                var valueOfArray = [];
+                if (!_.isArray(keyValue) && _.isObject(keyValue)) {
+                    keyValue = [keyValue];
+                }
                 var subLink = "";
                 for (var i = 0; i < keyValue.length; i++) {
                     var inputOutputField = keyValue[i],
-                        id = undefined,
+                        id = inputOutputField.guid || (_.isObject(inputOutputField.id) ? inputOutputField.id.id : inputOutputField.id),
                         tempLink = "",
-                        readOnly = false;
-                    if (inputOutputField['$id$']) {
-                        inputOutputField.id = inputOutputField['$id$'];
+                        status = inputOutputField.status || (_.isObject(inputOutputField.id) ? inputOutputField.id.state : inputOutputField.state),
+                        readOnly = Enums.entityStateReadOnly[status];
+                    if (!inputOutputField.attributes && inputOutputField.values) {
+                        inputOutputField['attributes'] = inputOutputField.values;
                     }
-                    if (inputOutputField) {
-                        if (_.isObject(inputOutputField.id)) {
-                            id = inputOutputField.id.id;
-                            if (Globals.entityStateReadOnly[inputOutputField.id.state]) {
-                                readOnly = inputOutputField.id.state
-                            }
-                        } else if (inputOutputField.id) {
-                            id = inputOutputField.id;
-                        } else if (_.isString(inputOutputField) || _.isBoolean(inputOutputField) || _.isNumber(inputOutputField)) {
-                            if (inputOutputField.indexOf("$") == -1) {
-                                valueOfArray.push('<span>' + inputOutputField + '</span>');
-                            }
-                        } else if (_.isObject(inputOutputField)) {
-                            _.each(inputOutputField, function(objValue, objKey) {
-                                var value = objValue;
-                                if (objKey.indexOf("$") == -1) {
-                                    if (_.isObject(value)) {
-                                        value = JSON.stringify(value);
-                                    }
-                                    valueOfArray.push('<span>' + objKey + ':' + value + '</span>');
-                                }
-                            });
+                    if (_.isString(inputOutputField) || _.isBoolean(inputOutputField) || _.isNumber(inputOutputField)) {
+                        var tempVarfor$check = inputOutputField.toString();
+                        if (tempVarfor$check.indexOf("$") == -1) {
+                            valueOfArray.push('<span>' + _.escape(inputOutputField) + '</span>');
                         }
-                    }
-
-                    if (id) {
-                        if (inputOutputField.values) {
-                            if (inputOutputField.values.name) {
-                                tempLink += '<a href="#!/detailPage/' + id + '">' + inputOutputField.values.name + '</a>'
-                            } else if (inputOutputField.values.qualifiedName) {
-                                tempLink += '<a href="#!/detailPage/' + id + '">' + inputOutputField.values.qualifiedName + '</a>'
-                            } else if (inputOutputField.typeName) {
-                                tempLink += '<a href="#!/detailPage/' + id + '">' + inputOutputField.typeName + '</a>'
-                            } else {
-                                tempLink += '<a href="#!/detailPage/' + id + '">' + id + '</a>'
+                    } else if (_.isObject(inputOutputField) && !id) {
+                        var attributesList = inputOutputField;
+                        if (scope.typeHeaders && inputOutputField.typeName) {
+                            var typeNameCategory = scope.typeHeaders.fullCollection.findWhere({ name: inputOutputField.typeName });
+                            if (attributesList.attributes && typeNameCategory && typeNameCategory.get('category') === 'STRUCT') {
+                                attributesList = attributesList.attributes;
                             }
-                        } else if (inputOutputField.name) {
-                            tempLink += '<a href="#!/detailPage/' + id + '">' + inputOutputField.name + '</a>';
-                        } else if (inputOutputField.qualifiedName) {
-                            tempLink += '<a href="#!/detailPage/' + id + '">' + inputOutputField.qualifiedName + '</a>'
-                        } else {
+                        }
+                        _.each(attributesList, function(objValue, objKey) {
+                            var value = objValue,
+                                tempVarfor$check = objKey.toString();
+                            if (tempVarfor$check.indexOf("$") == -1) {
+                                if (_.isObject(value)) {
+                                    value = JSON.stringify(value);
+                                }
+                                if (extractJSON) {
+                                    if (extractJSON && extractJSON.extractKey) {
+                                        if (_.isObject(extractJSON.extractKey)) {
+                                            _.each(extractJSON.extractKey, function(extractKey) {
+                                                if (objKey === extractKey) {
+                                                    valueOfArray.push('<span>' + _.escape(objKey) + ':' + _.escape(value) + '</span>');
+                                                }
+                                            });
+                                        } else if (_.isString(extractJSON.extractKey) && extractJSON.extractKey === objKey) {
+                                            valueOfArray.push(_.escape(value));
+                                        }
+                                    }
+                                } else {
+                                    valueOfArray.push('<span>' + _.escape(objKey) + ':' + _.escape(value) + '</span>');
+                                }
+                            }
+                        });
+                    }
+                    if (id && inputOutputField) {
+                        var name = Utils.getName(inputOutputField);
+                        if ((name === "-" || name === id) && !inputOutputField.attributes) {
                             var fetch = true;
-                            fetchInputOutputValue(id);
-                            tempLink += '<div data-id="' + id + '"></div>';
+                            var fetchId = (_.isObject(id) ? id.id : id);
+                            fetchInputOutputValue(fetchId);
+                            tempLink += '<div data-id="' + fetchId + '"></div>';
+                        } else {
+                            tempLink += '<a href="#!/detailPage/' + id + '">' + name + '</a>'
                         }
                     }
                     if (readOnly) {
@@ -196,122 +195,30 @@ define(['require', 'utils/Utils', 'modules/Modal', 'utils/Messages', 'utils/Glob
                 if (valueOfArray.length) {
                     subLink = valueOfArray.join(', ');
                 }
-                if (searchTable) {
-                    table = subLink;
-                } else {
-                    table += '<tr><td>' + key + '</td><td>' + subLink + '</td></tr>';
-                }
-            } else if (_.isObject(keyValue)) {
-                var id = undefined,
-                    tempLink = "",
-                    readOnly = false;
-                if (keyValue['$id$']) {
-                    keyValue.id = keyValue['$id$'];
-                }
-                if (_.isObject(keyValue.id)) {
-                    id = keyValue.id.id;
-                    if (Globals.entityStateReadOnly[keyValue.id.state]) {
-                        readOnly = keyValue.id.state
-                    }
-                } else {
-                    id = keyValue.id;
-                }
-                if (id) {
-                    if (keyValue.values) {
-                        if (keyValue.values.name) {
-                            tempLink += '<a href="#!/detailPage/' + id + '">' + keyValue.values.name + '</a>';
-                        } else if (keyValue.values.qualifiedName) {
-                            tempLink += '<a href="#!/detailPage/' + id + '">' + keyValue.values.qualifiedName + '</a>'
-                        } else if (keyValue.typeName) {
-                            tempLink += '<a href="#!/detailPage/' + id + '">' + keyValue.typeName + '</a>'
-                        } else {
-                            tempLink += '<a href="#!/detailPage/' + id + '">' + id + '</a>';
-                        }
-                    } else if (keyValue.name) {
-                        tempLink += '<a href="#!/detailPage/' + id + '">' + keyValue.name + '</a>';
-                    } else if (keyValue.qualifiedName) {
-                        tempLink += '<a href="#!/detailPage/' + id + '">' + keyValue.qualifiedName + '</a>'
-                    } else {
-                        var fetch = true;
-                        fetchInputOutputValue(id);
-                        tempLink += '<div data-id="' + id + '"></div>';
-                    }
-                    if (readOnly) {
-                        if (!fetch) {
-                            tempLink += '<button title="Deleted" class="btn btn-atlasAction btn-atlas deleteBtn"><i class="fa fa-trash"></i></button>';
-                        }
-
-                        if (searchTable) {
-                            if (!fetch) {
-                                table = '<div class="block readOnlyLink">' + tempLink + '</div>';
-                            } else {
-                                table = tempLink;
-                            }
-                        } else {
-                            if (!fetch) {
-                                table += '<tr><td>' + key + '</td><td><div class="block readOnlyLink">' + tempLink + '</div></td></tr>';
-                            } else {
-                                table += '<tr><td>' + key + '</td><td>' + tempLink + '</td></tr>';
-                            }
-                        }
-                    } else {
-                        if (searchTable) {
-                            table = tempLink;
-                        } else {
-                            table += '<tr><td>' + key + '</td><td>' + tempLink + '</td></tr>';
-                        }
-                    }
-                } else {
-                    var stringArr = [];
-                    _.each(keyValue, function(val, key) {
-                        var value = "";
-                        if (_.isObject(val)) {
-                            value = JSON.stringify(val);
-                        } else {
-                            value = val;
-                        }
-                        var attrName = "<span>" + key + " : " + value + "</span>";
-                        stringArr.push(attrName);
-                    });
-                    var jointValues = stringArr.join(", ");
-                    if (jointValues.length) {
-                        tempLink += '<div>' + jointValues + '</div>';
-                    }
-                    if (readOnly) {
-                        tempLink += '<button title="Deleted" class="btn btn-atlasAction btn-atlas deleteBtn"><i class="fa fa-trash"></i></button>';
-                        if (searchTable) {
-                            table = '<div class="block readOnlyLink">' + tempLink + '</div>';
-                        } else {
-                            table += '<tr><td>' + key + '</td><td><div class="block readOnlyLink">' + tempLink + '</div></td></tr>';
-                        }
-
-                    } else {
-                        if (searchTable) {
-                            table = tempLink;
-                        } else {
-                            table += '<tr><td>' + key + '</td><td>' + tempLink + '</td></tr>';
-                        }
-                    }
+                return subLink;
+            }
+        _.sortBy(_.keys(valueObject)).map(function(key) {
+            key = _.escape(key);
+            var keyValue = valueObject[key];
+            var defEntity = _.find(attributeDefs, { name: key });
+            if (defEntity && defEntity.typeName) {
+                var defEntityType = defEntity.typeName.toLocaleLowerCase();
+                if (defEntityType === 'date' || defEntityType === 'time') {
+                    keyValue = new Date(keyValue);
+                } else if (_.isObject(keyValue)) {
+                    keyValue = extractObject(keyValue);
                 }
             } else {
-                if (key.indexOf("Time") !== -1 || key == "retention") {
-                    if (searchTable) {
-                        table = new Date(valueObject[key]);
-                    } else {
-                        table += '<tr><td>' + key + '</td><td>' + new Date(valueObject[key]) + '</td></tr>';
-                    }
-                } else {
-                    if (searchTable) {
-                        if (_.isBoolean(valueObject[key])) {
-                            table = valueObject[key].toString();
-                        } else {
-                            table = valueObject[key];
-                        }
-                    } else {
-                        table += '<tr><td>' + key + '</td><td>' + valueObject[key] + '</td></tr>';
-                    }
+                if (_.isObject(keyValue)) {
+                    keyValue = extractObject(keyValue)
                 }
             }
+            if (isTable) {
+                table += '<tr><td>' + _.escape(key) + '</td><td>' + (_.isObject(valueObject[key]) ? keyValue : _.escape(keyValue)) + '</td></tr>';
+            } else {
+                table += '<div>' + (_.isObject(valueObject[key]) ? keyValue : _.escape(keyValue)) + '</div>';
+            }
+
         });
         return table;
     }
@@ -336,13 +243,13 @@ define(['require', 'utils/Utils', 'modules/Modal', 'utils/Messages', 'utils/Glob
                 if (i == 0) {
                     href = splitUrlWithoutTerm[i];
                     urlList.push({
-                        value: splitUrlWithoutTerm[i],
+                        value: _.escape(splitUrlWithoutTerm[i]),
                         href: href
                     });
                 } else {
                     href += "/terms/" + splitUrlWithoutTerm[i];
                     urlList.push({
-                        value: splitUrlWithoutTerm[i],
+                        value: _.escape(splitUrlWithoutTerm[i]),
                         href: href
                     });
                 };
@@ -354,7 +261,7 @@ define(['require', 'utils/Utils', 'modules/Modal', 'utils/Messages', 'utils/Glob
         var li = "";
         if (options.urlList) {
             _.each(options.urlList, function(object) {
-                li += '<li><a href="javascript:void(0)" class="link" data-href="/api/atlas/v1/taxonomies/' + object.href + '">' + object.value + '</a></li>';
+                li += '<li><a class="link" href="#!/taxonomy/detailCatalog/api/atlas/v1/taxonomies/' + object.href + '?load=true">' + _.escape(object.value) + '</a></li>';
             });
         }
         if (options.scope) {
@@ -363,49 +270,50 @@ define(['require', 'utils/Utils', 'modules/Modal', 'utils/Messages', 'utils/Glob
             options.scope.asBreadcrumbs({
                 namespace: 'breadcrumb',
                 overflow: "left",
-                dropicon: "fa fa-ellipsis-h",
                 responsive: false,
-                dropdown: function() {
-                    return '<div class=\"dropdown\">' +
-                        '<a href=\"javascript:void(0);\" class=\"' + this.namespace + '-toggle\" data-toggle=\"dropdown\"><i class=\"' + this.dropicon + '\"</i></a>' +
-                        '<ul class=\"' + this.namespace + '-menu dropdown-menu popover popoverTerm bottom arrowPosition \" ><div class="arrow"></div></ul>' +
-                        '</div>';
-                },
-                dropdownContent: function(a) {
-                    return '<li><a class="link" href="javascript:void(0)" data-href="' + a.find('a').data('href') + '" class="dropdown-item">' + a.text() + "</a></li>";
+                toggleIconClass: 'fa fa-ellipsis-h',
+                dropdown: function(classes) {
+                    var dropdownClass = 'dropdown';
+                    var dropdownMenuClass = 'dropdown-menu popover popoverTerm bottom arrowPosition';
+                    if (this.options.overflow === 'right') {
+                        dropdownMenuClass += ' dropdown-menu-right';
+                    }
+
+                    return '<li class="' + dropdownClass + ' ' + classes.dropdownClass + '">' +
+                        '<a href="javascript:void(0);" class="' + classes.toggleClass + '" data-toggle="dropdown">' +
+                        '<i class="' + classes.toggleIconClass + '"></i>' +
+                        '</a>' +
+                        '<ul class="' + dropdownMenuClass + ' ' + classes.dropdownMenuClass + '">' +
+                        '<div class="arrow"></div>' +
+                        '</ul>' +
+                        '</li>';
                 }
             });
         }
-        options.scope.find('li a.link').click(function() {
-            Utils.setUrl({
-                url: "#!/taxonomy/detailCatalog" + $(this).data('href') + "?load=true",
-                mergeBrowserUrl: false,
-                trigger: true,
-                updateTabState: function() {
-                    return { taxonomyUrl: this.url, stateChanged: false };
-                }
-            });
-        });
     }
-    CommonViewFunction.termTableBreadcrumbMaker = function(model) {
-        var traits = model.get('$traits$'),
+    CommonViewFunction.termTableBreadcrumbMaker = function(obj) {
+        if (!obj) {
+            return "";
+        }
+        var traits = obj.classificationNames || _.pluck(obj.classifications, 'typeName'),
             url = "",
             deleteHtml = "",
             html = "",
-            id = model.get('$id$').id,
-            terms = [];
-        _.keys(traits).map(function(key) {
-            if (traits[key]) {
-                var tagName = Utils.checkTagOrTerm(traits[key]);
-            }
-            if (tagName.term) {
-                terms.push({
-                    deleteHtml: '<a class="pull-left" title="Remove Term"><i class="fa fa-trash" data-id="tagClick" data-type="term" data-assetname="' + model.get("name") + '" data-name="' + tagName.fullName + '" data-guid="' + model.get('$id$').id + '" ></i></a>',
-                    url: tagName.fullName.split(".").join("/"),
-                    name: tagName.fullName
-                });
-            }
-        });
+            id = obj.guid,
+            terms = [],
+            entityName = Utils.getName(obj);
+        if (traits) {
+            traits.map(function(term) {
+                var checkTagOrTerm = Utils.checkTagOrTerm(term);
+                if (checkTagOrTerm.term) {
+                    terms.push({
+                        deleteHtml: '<a class="pull-left" title="Remove Term"><i class="fa fa-trash" data-id="tagClick" data-type="term" data-assetname="' + entityName + '" data-name="' + term + '" data-guid="' + obj.guid + '" ></i></a>',
+                        url: _.unescape(term).split(".").join("/"),
+                        name: term
+                    });
+                }
+            });
+        }
         _.each(terms, function(obj, i) {
             var className = "";
             if (i >= 1) {
@@ -417,10 +325,12 @@ define(['require', 'utils/Utils', 'modules/Modal', 'utils/Messages', 'utils/Glob
         if (terms.length > 1) {
             html += '<div><a  href="javascript:void(0)" data-id="showMoreLessTerm" class="inputTag inputTagGreen"><span>Show More </span><i class="fa fa-angle-right"></i></a></div>'
         }
-        if (model.get('$id$')) {
-            html += '<div><a href="javascript:void(0)" class="inputAssignTag" data-id="addTerm" data-guid="' + model.get('$id$').id + '"><i class="fa fa-folder-o"></i>' + " " + 'Assign Term</a></div>'
-        } else {
-            html += '<div><a href="javascript:void(0)" class="inputAssignTag" data-id="addTerm"><i class="fa fa-folder-o"></i>' + " " + 'Assign Term</a></div>'
+        if (!Enums.entityStateReadOnly[obj.status]) {
+            if (obj.guid) {
+                html += '<div><a href="javascript:void(0)" class="inputAssignTag" data-id="addTerm" data-guid="' + (obj.guid) + '"><i class="fa fa-folder-o"></i>' + " " + 'Assign Term</a></div>'
+            } else {
+                html += '<div><a href="javascript:void(0)" class="inputAssignTag" data-id="addTerm"><i class="fa fa-folder-o"></i>' + " " + 'Assign Term</a></div>'
+            }
         }
         return {
             html: '<div class="termTableBreadcrumb" dataterm-id="' + id + '">' + html + '</div>',
@@ -428,40 +338,45 @@ define(['require', 'utils/Utils', 'modules/Modal', 'utils/Messages', 'utils/Glob
         }
 
     }
-    CommonViewFunction.tagForTable = function(model) {
-        var traits = model.get('$traits$'),
+    CommonViewFunction.tagForTable = function(obj) {
+        var traits = obj.classificationNames || _.pluck(obj.classifications, 'typeName'),
             atags = "",
             addTag = "",
             popTag = "",
-            count = 0;
-        _.keys(model.get('$traits$')).map(function(key) {
-            if (traits[key]) {
-                var tagName = Utils.checkTagOrTerm(traits[key]);
-            }
-            var className = "inputTag";
-            if (tagName.tag) {
-                if (count >= 1) {
-                    popTag += '<a class="' + className + '" data-id="tagClick"><span class="inputValue">' + tagName.fullName + '</span><i class="fa fa-times" data-id="delete"  data-assetname="' + model.get("name") + '"data-name="' + tagName.fullName + '" data-type="tag" data-guid="' + model.get('$id$').id + '" ></i></a>';
-                } else {
-                    atags += '<a class="' + className + '" data-id="tagClick"><span class="inputValue">' + tagName.fullName + '</span><i class="fa fa-times" data-id="delete" data-assetname="' + model.get("name") + '" data-name="' + tagName.fullName + '"  data-type="tag" data-guid="' + model.get('$id$').id + '" ></i></a>';
+            count = 0,
+            entityName = Utils.getName(obj);
+        if (traits) {
+            traits.map(function(tag) {
+                var checkTagOrTerm = Utils.checkTagOrTerm(tag);
+                if (checkTagOrTerm.tag) {
+                    var className = "inputTag",
+                        tagString = '<a class="' + className + '" data-id="tagClick"><span class="inputValue">' + tag + '</span><i class="fa fa-times" data-id="delete"  data-assetname="' + entityName + '"data-name="' + tag + '" data-type="tag" data-guid="' + obj.guid + '" ></i></a>';
+                    if (count >= 1) {
+                        popTag += tagString;
+                    } else {
+                        atags += tagString;
+                    }
+                    ++count;
                 }
-                ++count;
+            });
+        }
+        if (!Enums.entityStateReadOnly[obj.status]) {
+            if (obj.guid) {
+                addTag += '<a href="javascript:void(0)" data-id="addTag" class="inputTagAdd assignTag" data-guid="' + obj.guid + '" ><i class="fa fa-plus"></i></a>';
+            } else {
+                addTag += '<a href="javascript:void(0)" data-id="addTag" class="inputTagAdd assignTag"><i style="right:0" class="fa fa-plus"></i></a>';
             }
-        });
-        if (model.get('$id$')) {
-            addTag += '<a href="javascript:void(0)" data-id="addTag" class="inputTagAdd" data-guid="' + model.get('$id$').id + '" ><i class="fa fa-plus"></i></a>';
-        } else {
-            addTag += '<a href="javascript:void(0)" data-id="addTag" class="inputTagAdd"><i style="right:0" class="fa fa-plus"></i></a>';
         }
         if (count > 1) {
-            addTag += '<div data-id="showMoreLess" class="inputTagAdd tagDetailPopover"><i class="fa fa-ellipsis-h" aria-hidden="true"></i></div>'
+            addTag += '<div data-id="showMoreLess" class="inputTagAdd assignTag tagDetailPopover"><i class="fa fa-ellipsis-h" aria-hidden="true"></i></div>'
         }
         return '<div class="tagList">' + atags + addTag + '<div class="popover popoverTag bottom" style="display:none"><div class="arrow"></div><div class="popover-content popoverContainer">' + popTag + '</div></div></div>';
     }
-    CommonViewFunction.saveTermToAsset = function(options) {
+    CommonViewFunction.saveTermToAsset = function(options, that) {
         require(['models/VCatalog'], function(Vcatalog) {
             var VCatalog = new Vcatalog();
             var name = options.termName;
+            ++that.asyncFetchCounter;
             VCatalog.url = function() {
                 return "api/atlas/v1/entities/" + options.guid + "/tags/" + name;
             };
@@ -470,27 +385,76 @@ define(['require', 'utils/Utils', 'modules/Modal', 'utils/Messages', 'utils/Glob
                     Utils.notifySuccess({
                         content: "Term " + name + Messages.addTermToEntitySuccessMessage
                     });
-                    if (options.callback) {
-                        options.callback();
-                    }
                     if (options.collection) {
                         options.collection.fetch({ reset: true });
                     }
                 },
-                error: function(error, data, status) {
-                    if (data && data.responseText) {
-                        var data = JSON.parse(data.responseText);
-                        Utils.notifyError({
-                            content: data.message || data.msgDesc
-                        });
-                        if (options.callback) {
-                            options.callback();
-                        }
+                complete: function() {
+                    --that.asyncFetchCounter
+                    if (that.callback && that.asyncFetchCounter === 0) {
+                        that.callback(); // It will call to parent of parent Callback i.e callback of searchLayoutView
                     }
-                },
-                complete: function() {}
+                }
             });
         })
+    }
+    CommonViewFunction.attributeFilter = {
+        generateUrl: function(attrObj) {
+            var attrQuery = [];
+            if (attrObj) {
+                _.each(attrObj, function(obj) {
+                    attrQuery.push(obj.id + "::" + obj.operator + "::" + obj.value + "::" + obj.type);
+                });
+                return attrQuery.join();
+            } else {
+                return null;
+            }
+        },
+        extractUrl: function(urlObj) {
+            var attrObj = [];
+            if (urlObj && urlObj.length) {
+                _.each(urlObj.split(","), function(obj) {
+                    var temp = obj.split("::");
+                    attrObj.push({ id: temp[0], operator: temp[1], value: temp[2], type: temp[3] });
+                });
+                return attrObj;
+            } else {
+                return null;
+            }
+        },
+        generateAPIObj: function(url) {
+            if (url && url.length) {
+                var parsObj = {
+                    "condition": 'AND',
+                    "criterion": convertKeyAndExtractObj(this.extractUrl(url))
+                }
+                return parsObj;
+            } else {
+                return null;
+            }
+
+            function convertKeyAndExtractObj(rules) {
+                var convertObj = [];
+                _.each(rules, function(rulObj) {
+                    var tempObj = {};
+                    // For nested 
+                    // if (rulObj.rules) {
+                    //     tempObj = {
+                    //         "condition": "AND",
+                    //         "criterion": convertKeyAndExtractObj(rulObj.rules)
+                    //     }
+                    // } else {
+                    // }
+                    tempObj = {
+                        "attributeName": rulObj.id,
+                        "operator": rulObj.operator,
+                        "attributeValue": (rulObj.type === "date" ? Date.parse(rulObj.value) : rulObj.value)
+                    }
+                    convertObj.push(tempObj);
+                });
+                return convertObj;
+            }
+        }
     }
     CommonViewFunction.addRestCsrfCustomHeader = function(xhr, settings) {
         //    if (settings.url == null || !settings.url.startsWith('/webhdfs/')) {

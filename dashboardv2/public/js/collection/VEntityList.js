@@ -19,20 +19,41 @@
 define(['require',
     'utils/Globals',
     'collection/BaseCollection',
-    'models/VEntity'
-], function(require, Globals, BaseCollection, VEntity) {
+    'models/VEntity',
+    'utils/UrlLinks'
+], function(require, Globals, BaseCollection, VEntity, UrlLinks) {
     'use strict';
     var VEntityList = BaseCollection.extend(
         //Prototypal attributes
         {
-            url: Globals.baseURL + '/api/atlas/entities',
+            url: UrlLinks.entitiesApiUrl(),
 
             model: VEntity,
 
             initialize: function() {
                 this.modelName = 'VEntity';
-                this.modelAttrName = 'definition';
-                this.bindErrorEvents();
+                this.modelAttrName = 'entityDefs';
+            },
+            parseRecords: function(resp, options) {
+                try {
+                    // if (!this.modelAttrName) {
+                    //     throw new Error("this.modelAttrName not defined for " + this);
+                    // }
+                    if (resp.entity && resp.referredEntities) {
+                        var obj = {
+                            entity: resp.entity,
+                            referredEntities: resp.referredEntities
+                        }
+                        return obj;
+                    } else if (resp[this.modelAttrName]) {
+                        return resp[this.modelAttrName];
+                    } else {
+                        return resp
+                    }
+
+                } catch (e) {
+                    console.log(e);
+                }
             }
         },
         //Static Class Members

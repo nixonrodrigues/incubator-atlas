@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
 -->
-<div class="modal-dialog {{mainClass}}" role="document">
+<div class="modal-dialog {{mainClass}} " style="width:{{width}}" role="document">
     <div class="modal-content">
         {{#if title}}
         <div class="modal-header">
@@ -31,10 +31,13 @@
         <div class="modal-body">{{content}}</div>
         {{#if showFooter}}
         <div class="modal-footer">
-            {{#if allowCancel}} {{#if cancelText}}
-            <button class="btn btn-atlas cancel">{{tt cancelText}}</button>
+            {{#if buttons}} {{#each buttons}}
+             <button type="button" class="btn btn-atlas {{this.btnClass}}">{{this.text}}</button>
+            {{/each}} {{else}} {{#if allowCancel}} {{#if cancelText}}
+            <button type="button" class="btn btn-atlas cancel">{{tt cancelText}}</button>
             {{/if}} {{/if}}
-            <button class="btn btn-atlas ok">{{tt okText}}</button>
+            <button type="button" class="btn btn-atlas ok">{{tt okText}}</button>
+            {{/if}}
         </div>
         {{/if}} {{/if}}
     </div>

@@ -20,32 +20,17 @@ package org.apache.atlas.repository.typestore;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
-import com.thinkaurelius.titan.core.TitanGraph;
-import com.thinkaurelius.titan.core.util.TitanCleanup;
-import com.tinkerpop.blueprints.Direction;
-import com.tinkerpop.blueprints.Edge;
-import com.tinkerpop.blueprints.Vertex;
-
 import org.apache.atlas.AtlasException;
-import org.apache.atlas.RepositoryMetadataModule;
+import org.apache.atlas.TestModules;
 import org.apache.atlas.TestUtils;
+import org.apache.atlas.repository.RepositoryException;
 import org.apache.atlas.repository.graph.GraphHelper;
-import org.apache.atlas.repository.graph.GraphProvider;
+import org.apache.atlas.repository.graphdb.AtlasEdge;
+import org.apache.atlas.repository.graphdb.AtlasEdgeDirection;
+import org.apache.atlas.repository.graphdb.AtlasGraph;
+import org.apache.atlas.repository.graphdb.AtlasVertex;
 import org.apache.atlas.typesystem.TypesDef;
-import org.apache.atlas.typesystem.types.AttributeDefinition;
-import org.apache.atlas.typesystem.types.ClassType;
-import org.apache.atlas.typesystem.types.DataTypes;
-import org.apache.atlas.typesystem.types.DataTypes.TypeCategory;
-import org.apache.atlas.typesystem.types.EnumType;
-import org.apache.atlas.typesystem.types.EnumTypeDefinition;
-import org.apache.atlas.typesystem.types.EnumValue;
-import org.apache.atlas.typesystem.types.HierarchicalTypeDefinition;
-import org.apache.atlas.typesystem.types.IDataType;
-import org.apache.atlas.typesystem.types.Multiplicity;
-import org.apache.atlas.typesystem.types.StructType;
-import org.apache.atlas.typesystem.types.StructTypeDefinition;
-import org.apache.atlas.typesystem.types.TraitType;
-import org.apache.atlas.typesystem.types.TypeSystem;
+import org.apache.atlas.typesystem.types.*;
 import org.apache.atlas.typesystem.types.utils.TypesUtil;
 import org.testng.Assert;
 import org.testng.annotations.AfterClass;
@@ -54,7 +39,7 @@ import org.testng.annotations.Guice;
 import org.testng.annotations.Test;
 
 import javax.inject.Inject;
-
+import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -64,12 +49,10 @@ import static org.apache.atlas.typesystem.types.utils.TypesUtil.createOptionalAt
 import static org.apache.atlas.typesystem.types.utils.TypesUtil.createRequiredAttrDef;
 import static org.apache.atlas.typesystem.types.utils.TypesUtil.createStructTypeDef;
 
-@Guice(modules = RepositoryMetadataModule.class)
+@Guice(modules = TestModules.TestOnlyModule.class)
 public class GraphBackedTypeStoreTest {
+    
     private static final String DESCRIPTION = "_description";
-
-    @Inject
-    private GraphProvider<TitanGraph> graphProvider;
 
     @Inject
     private ITypeStore typeStore;
@@ -86,17 +69,9 @@ public class GraphBackedTypeStoreTest {
     @AfterClass
     public void tearDown() throws Exception {
         ts.reset();
-        try {
-            graphProvider.get().shutdown();
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-        try {
-            TitanCleanup.clear(graphProvider.get());
-        } catch(Exception e) {
-            e.printStackTrace();
-        }
+//        AtlasGraphProvider.cleanup();
     }
+
 
     @Test
     public void testStore() throws AtlasException {
@@ -107,15 +82,15 @@ public class GraphBackedTypeStoreTest {
 
     @Test(dependsOnMethods = "testStore")
     public void testRestoreType() throws Exception {
-        TypesDef typesDef = ((GraphBackedTypeStore)typeStore).restoreType("Manager");
+        TypesDef typesDef = typeStore.restoreType("Manager");
         verifyRestoredClassType(typesDef, "Manager");
     }
 
     private void dumpGraph() {
-        TitanGraph graph = graphProvider.get();
-        for (Vertex v : graph.getVertices()) {
+        AtlasGraph<?, ?> graph = TestUtils.getGraph();
+        for (AtlasVertex<?,?> v : graph.getVertices()) {
             System.out.println("****v = " + GraphHelper.vertexString(v));
-            for (Edge e : v.getEdges(Direction.OUT)) {
+            for (AtlasEdge<?,?> e : v.getEdges(AtlasEdgeDirection.OUT)) {
                 System.out.println("****e = " + GraphHelper.edgeString(e));
             }
         }
@@ -158,6 +133,37 @@ public class GraphBackedTypeStoreTest {
         ts.defineTypes(types);
     }
 
+    @Test
+    public void testTypeWithSpecialChars() throws AtlasException {
+        HierarchicalTypeDefinition<ClassType> specialTypeDef1 = createClassTypeDef("SpecialTypeDef1", "Typedef with special character",
+                ImmutableSet.<String>of(), createRequiredAttrDef("attribute$", DataTypes.STRING_TYPE));
+
+        HierarchicalTypeDefinition<ClassType> specialTypeDef2 = createClassTypeDef("SpecialTypeDef2", "Typedef with special character",
+                ImmutableSet.<String>of(), createRequiredAttrDef("attribute%", DataTypes.STRING_TYPE));
+
+        HierarchicalTypeDefinition<ClassType> specialTypeDef3 = createClassTypeDef("SpecialTypeDef3", "Typedef with special character",
+                ImmutableSet.<String>of(), createRequiredAttrDef("attribute{", DataTypes.STRING_TYPE));
+
+        HierarchicalTypeDefinition<ClassType> specialTypeDef4 = createClassTypeDef("SpecialTypeDef4", "Typedef with special character",
+                ImmutableSet.<String>of(), createRequiredAttrDef("attribute}", DataTypes.STRING_TYPE));
+
+        HierarchicalTypeDefinition<ClassType> specialTypeDef5 = createClassTypeDef("SpecialTypeDef5", "Typedef with special character",
+                ImmutableSet.<String>of(), createRequiredAttrDef("attribute$%{}", DataTypes.STRING_TYPE));
+
+        TypesDef typesDef = TypesUtil.getTypesDef(ImmutableList.<EnumTypeDefinition>of(),
+                ImmutableList.<StructTypeDefinition>of(),
+                ImmutableList.<HierarchicalTypeDefinition<TraitType>>of(),
+                ImmutableList.of(specialTypeDef1, specialTypeDef2, specialTypeDef3, specialTypeDef4, specialTypeDef5));
+
+        Map<String, IDataType> createdTypes = ts.defineTypes(typesDef);
+        typeStore.store(ts, ImmutableList.copyOf(createdTypes.keySet()));
+
+        //Validate the updated types
+        TypesDef types = typeStore.restore();
+        ts.reset();
+        ts.defineTypes(types);
+    }
+
     @Test(dependsOnMethods = "testStore")
     public void testTypeUpdate() throws Exception {
         //Add enum value
@@ -174,7 +180,8 @@ public class GraphBackedTypeStoreTest {
         HierarchicalTypeDefinition<ClassType> deptTypeDef = createClassTypeDef("Department", "Department"+_description,
             ImmutableSet.<String>of(), createRequiredAttrDef("name", DataTypes.STRING_TYPE),
                 new AttributeDefinition("employees", String.format("array<%s>", "Person"), Multiplicity.OPTIONAL,
-                        true, "department"));
+                        true, "department"),
+                new AttributeDefinition("positions", String.format("map<%s,%s>", DataTypes.STRING_TYPE.getName(), "Person"), Multiplicity.OPTIONAL, false, null));
         TypesDef typesDef = TypesUtil.getTypesDef(ImmutableList.of(orgLevelEnum), ImmutableList.of(addressDetails),
                 ImmutableList.<HierarchicalTypeDefinition<TraitType>>of(),
                 ImmutableList.of(deptTypeDef));
@@ -211,22 +218,22 @@ public class GraphBackedTypeStoreTest {
         verifyEdges();
     }
 
-    private void verifyEdges() {
+    private void verifyEdges() throws RepositoryException {
         // ATLAS-474: verify that type update did not write duplicate edges to the type store.
         if (typeStore instanceof GraphBackedTypeStore) {
             GraphBackedTypeStore gbTypeStore = (GraphBackedTypeStore) typeStore;
-            Vertex typeVertex = gbTypeStore.findVertex(TypeCategory.CLASS, "Department");
+            AtlasVertex typeVertex = gbTypeStore.findVertices(Collections.singletonList("Department")).get("Department");
             int edgeCount = countOutgoingEdges(typeVertex, gbTypeStore.getEdgeLabel("Department", "employees"));
-            Assert.assertEquals(edgeCount, 1, "Should only be 1 edge for employees attribute on Department type vertex");
+            Assert.assertEquals(edgeCount, 1, "Should only be 1 edge for employees attribute on Department type AtlasVertex");
         }
     }
 
-    private int countOutgoingEdges(Vertex typeVertex, String edgeLabel) {
+    private int countOutgoingEdges(AtlasVertex typeVertex, String edgeLabel) {
 
-        Iterator<Edge> outGoingEdgesByLabel = GraphHelper.getOutGoingEdgesByLabel(typeVertex, edgeLabel);
+        Iterator<AtlasEdge> outGoingEdgesByLabel = GraphHelper.getInstance().getOutGoingEdgesByLabel(typeVertex, edgeLabel);
         int edgeCount = 0;
-        for (Iterator<Edge> iterator = outGoingEdgesByLabel; iterator.hasNext();) {
-            iterator.next();
+        for (; outGoingEdgesByLabel.hasNext();) {
+            outGoingEdgesByLabel.next();
             edgeCount++;
         }
         return edgeCount;
@@ -246,5 +253,4 @@ public class GraphBackedTypeStoreTest {
         }
         Assert.assertTrue(clsTypeFound, typeName + " type not restored");
     }
-
 }

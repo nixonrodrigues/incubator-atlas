@@ -29,9 +29,8 @@ define(['require',
         regions: {},
         events: {},
         initialize: function(options) {
-            _.extend(this, _.pick(options, 'globalVent', 'url', 'collection'));
+            _.extend(this, _.pick(options, 'url', 'collection'));
             this.value = [];
-
         },
         /**
          * After Page Render createBrudCrum called.
@@ -41,7 +40,7 @@ define(['require',
             var that = this;
             $(this.el).html(this.template());
             if (Globals.userLogedIn.status) {
-                that.$('.userName').html(Globals.userLogedIn.response.userName);
+                that.$('.userName').text(Globals.userLogedIn.response.userName);
             }
             var that = this;
             if (this.url) {

@@ -44,7 +44,8 @@ define(['require',
              * @constructs
              */
             initialize: function(options) {
-                _.extend(this, _.pick(options, 'globalVent', 'guid', 'tag'));
+                _.extend(this, _.pick(options, 'tag', 'classificationDefCollection', 'entityDefCollection', 'typeHeaders', 'enumDefCollection'));
+                this.collection = this.classificationDefCollection;
             },
             bindEvents: function() {},
             onRender: function() {
@@ -55,25 +56,31 @@ define(['require',
                 var that = this;
                 require(['views/search/SearchResultLayoutView'], function(SearchResultLayoutView) {
                     var value = {
-                        'query': "`" + that.tag + "`",
-                        'type': 'dsl'
+                        'tag': that.tag,
+                        'searchType': 'basic'
                     };
-                    that.RSearchResultLayoutView.show(new SearchResultLayoutView({
-                        value: value,
-                        tag: that.tag
-                    }));
+                    if (that.RSearchResultLayoutView) {
+                        that.RSearchResultLayoutView.show(new SearchResultLayoutView({
+                            value: value,
+                            entityDefCollection: that.entityDefCollection,
+                            typeHeaders: that.typeHeaders,
+                            tagCollection: that.collection,
+                            enumDefCollection: that.enumDefCollection
+                        }));
+                    }
                 });
             },
             renderTagAttributeCompositeView: function() {
                 var that = this;
                 require(['views/tag/TagAttributeDetailLayoutView'], function(TagAttributeDetailLayoutView) {
-                    that.RTagAttributeDetailLayoutView.show(new TagAttributeDetailLayoutView({
-                        tag: that.tag
-                    }));
+                    if (that.RTagAttributeDetailLayoutView) {
+                        that.RTagAttributeDetailLayoutView.show(new TagAttributeDetailLayoutView({
+                            tag: that.tag,
+                            collection: that.collection
+                        }));
+                    }
                 });
-            },
-
-
+            }
         });
     return TagDetailLayoutView;
 });

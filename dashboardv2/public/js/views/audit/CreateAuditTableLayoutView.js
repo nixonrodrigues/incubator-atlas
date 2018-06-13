@@ -19,9 +19,10 @@
 define(['require',
     'backbone',
     'hbs!tmpl/audit/CreateAuditTableLayoutView_tmpl',
-    'utils/Globals',
-    'utils/CommonViewFunction'
-], function(require, Backbone, CreateAuditTableLayoutViewTmpl, Globals, CommonViewFunction) {
+    'utils/Enums',
+    'utils/CommonViewFunction',
+    'utils/Utils'
+], function(require, Backbone, CreateAuditTableLayoutViewTmpl, Enums, CommonViewFunction, Utils) {
     'use strict';
 
     var CreateAuditTableLayoutView = Backbone.Marionette.LayoutView.extend(
@@ -40,7 +41,8 @@ define(['require',
                 auditCreate: "[data-id='auditCreate']",
                 noData: "[data-id='noData']",
                 tableAudit: "[data-id='tableAudit']",
-                auditHeaderValue: "[data-id='auditHeaderValue']"
+                auditHeaderValue: "[data-id='auditHeaderValue']",
+                tagHeader: "[data-id='tagHeader']"
             },
             /** ui events hash */
             events: function() {
@@ -53,7 +55,7 @@ define(['require',
              * @constructs
              */
             initialize: function(options) {
-                _.extend(this, _.pick(options, 'globalVent', 'guid', 'entityModel', 'action'));
+                _.extend(this, _.pick(options, 'guid', 'entityModel', 'action', 'entity', 'entityName', 'attributeDefs'));
             },
             bindEvents: function() {},
             onRender: function() {
@@ -62,18 +64,27 @@ define(['require',
             auditTableGenerate: function() {
                 var that = this,
                     table = "";
-                if (this.entityModel.get('details').search('{') >= 0) {
-                    var appendedString = "{" + this.entityModel.get('details') + "}";
-                    var auditData = appendedString.split('"')[0].split(':')[0].split("{")[1];
-                    var detailsObject = JSON.parse(appendedString.replace("{" + auditData + ":", '{"' + auditData + '":'))[auditData];
-                    //Append string for JSON parse
-                    var valueObject = detailsObject.values;
-                    if (this.action == Globals.auditAction.TAG_ADD) {
-                        this.ui.auditHeaderValue.html('<th>Tag</th>');
-                        this.ui.auditValue.html("<tr><td>" + detailsObject.typeName + "</td></tr>");
-                    } else {
+                var detailObj = this.entityModel.get('details');
+                if (detailObj && detailObj.search(':') >= 0) {
+                    var parseDetailsObject = detailObj.split(':');
+                    if (parseDetailsObject.length > 1) {
+                        parseDetailsObject.shift();
+                        var auditData = parseDetailsObject.join(":");
+                    }
+                    try {
+                        parseDetailsObject = JSON.parse(auditData);
+                        var name = _.escape(parseDetailsObject.typeName);
+                    } catch (err) {
+                        if (_.isArray(parseDetailsObject)) {
+                            var name = _.escape(parseDetailsObject[0]);
+                        }
+                    }
+                    var values = parseDetailsObject.values;
+                    if (parseDetailsObject && parseDetailsObject.values) {
+                        var tagHeader = ((name ? name : this.entityName));
+                        this.ui.tagHeader.append(tagHeader);
                         this.ui.auditHeaderValue.html('<th>Key</th><th>New Value</th>');
-                        table = CommonViewFunction.propertyTable(valueObject, this);
+                        table = CommonViewFunction.propertyTable({ scope: this, valueObject: values, attributeDefs: this.attributeDefs, extractJSON: { extractKey: 'value' } });
                         if (table.length) {
                             this.ui.noData.hide();
                             this.ui.tableAudit.show();
@@ -82,11 +93,10 @@ define(['require',
                             this.ui.noData.show();
                             this.ui.tableAudit.hide();
                         }
+                    } else {
+                        this.ui.auditHeaderValue.html('<th>' + this.action + '</th>');
+                        this.ui.auditValue.html("<tr><td>" + (name ? name : this.entityName) + "</td></tr>");
                     }
-                } else if (this.action == Globals.auditAction.TAG_DELETE) {
-                    var appendedString = this.entityModel.get('details').split(':');
-                    this.ui.auditHeaderValue.html('<th>Tag</th>');
-                    this.ui.auditValue.html("<tr><td>" + appendedString[1] + "</td></tr>");
                 }
 
             },

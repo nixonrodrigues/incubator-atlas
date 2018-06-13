@@ -20,19 +20,19 @@ define(['require',
     'utils/Globals',
     'collection/BaseCollection',
     'models/VCatalog',
-], function(require, Globals, BaseCollection, VCatalog) {
+    'utils/UrlLinks'
+], function(require, Globals, BaseCollection, VCatalog, UrlLinks) {
     'use strict';
     var VCatalogList = BaseCollection.extend(
         //Prototypal attributes
         {
-            url: Globals.baseURL + '/api/atlas/v1/taxonomies',
+            url: UrlLinks.taxonomiesApiUrl(),
 
             model: VCatalog,
 
             initialize: function() {
                 this.modelName = 'VCatalog';
                 this.modelAttrName = '';
-                this.bindErrorEvents();
             },
             fetch: function(options) {
                 //Call Backbone's fetch

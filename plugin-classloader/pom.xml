@@ -22,16 +22,12 @@
     <parent>
         <artifactId>apache-atlas</artifactId>
         <groupId>org.apache.atlas</groupId>
-        <version>0.8-incubating-SNAPSHOT</version>
+        <version>0.9-incubating-SNAPSHOT</version>
     </parent>
     <artifactId>atlas-plugin-classloader</artifactId>
     <description>Apache Atlas Plugin Classloader</description>
     <name>Apache Atlas Plugin Classloader</name>
     <packaging>jar</packaging>
-
-    <properties>
-        <checkstyle.failOnViolation>true</checkstyle.failOnViolation>
-    </properties>
 
     <dependencies>
         <dependency>

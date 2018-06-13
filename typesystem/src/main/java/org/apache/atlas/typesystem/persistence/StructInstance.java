@@ -32,7 +32,7 @@ import org.apache.atlas.typesystem.types.FieldMapping;
 import org.apache.atlas.typesystem.types.StructType;
 import org.apache.atlas.typesystem.types.TypeSystem;
 import org.apache.atlas.typesystem.types.ValueConversionException;
-import org.apache.atlas.utils.MD5Utils;
+import org.apache.atlas.utils.SHA256Utils;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
@@ -45,6 +45,7 @@ public class StructInstance implements ITypedStruct {
     public final String dataTypeName;
     public final FieldMapping fieldMapping;
     public final boolean nullFlags[];
+    public final boolean explicitSets[];
     public final boolean[] bools;
     public final byte[] bytes;
     public final short[] shorts;
@@ -62,7 +63,7 @@ public class StructInstance implements ITypedStruct {
     public final ReferenceableInstance[] referenceables;
     public final Id[] ids;
 
-    public StructInstance(String dataTypeName, FieldMapping fieldMapping, boolean[] nullFlags, boolean[] bools,
+    public StructInstance(String dataTypeName, FieldMapping fieldMapping, boolean[] nullFlags, boolean[] explicitSets, boolean[] bools,
             byte[] bytes, short[] shorts, int[] ints, long[] longs, float[] floats, double[] doubles,
             BigDecimal[] bigDecimals, BigInteger[] bigIntegers, Date[] dates, String[] strings,
             ImmutableList<Object>[] arrays, ImmutableMap<Object, Object>[] maps, StructInstance[] structs,
@@ -71,6 +72,7 @@ public class StructInstance implements ITypedStruct {
         this.dataTypeName = dataTypeName;
         this.fieldMapping = fieldMapping;
         this.nullFlags = nullFlags;
+        this.explicitSets = explicitSets;
         this.bools = bools;
         this.bytes = bytes;
         this.shorts = shorts;
@@ -91,6 +93,10 @@ public class StructInstance implements ITypedStruct {
         for (int i = 0; i < nullFlags.length; i++) {
             nullFlags[i] = true;
         }
+
+        for (int i = 0; i < explicitSets.length; i++) {
+            explicitSets[i] = false;
+        }
     }
 
     @Override
@@ -108,9 +114,12 @@ public class StructInstance implements ITypedStruct {
         if (i == null) {
             throw new ValueConversionException(getTypeName(), val, "Unknown field " + attrName);
         }
+
         int pos = fieldMapping.fieldPos.get(attrName);
         int nullPos = fieldMapping.fieldNullPos.get(attrName);
         Object cVal = null;
+
+        explicitSets[nullPos] = true;
 
         if (val != null && val instanceof Id) {
             ClassType clsType = TypeSystem.getInstance().getDataType(ClassType.class, i.dataType().getName());
@@ -129,19 +138,19 @@ public class StructInstance implements ITypedStruct {
         }
         nullFlags[nullPos] = false;
         if (i.dataType() == DataTypes.BOOLEAN_TYPE) {
-            bools[pos] = ((Boolean) cVal).booleanValue();
+            bools[pos] = (Boolean) cVal;
         } else if (i.dataType() == DataTypes.BYTE_TYPE) {
-            bytes[pos] = ((Byte) cVal).byteValue();
+            bytes[pos] = (Byte) cVal;
         } else if (i.dataType() == DataTypes.SHORT_TYPE) {
-            shorts[pos] = ((Short) cVal).shortValue();
+            shorts[pos] = (Short) cVal;
         } else if (i.dataType() == DataTypes.INT_TYPE) {
-            ints[pos] = ((Integer) cVal).intValue();
+            ints[pos] = (Integer) cVal;
         } else if (i.dataType() == DataTypes.LONG_TYPE) {
-            longs[pos] = ((Long) cVal).longValue();
+            longs[pos] = (Long) cVal;
         } else if (i.dataType() == DataTypes.FLOAT_TYPE) {
-            floats[pos] = ((Float) cVal).floatValue();
+            floats[pos] = (Float) cVal;
         } else if (i.dataType() == DataTypes.DOUBLE_TYPE) {
-            doubles[pos] = ((Double) cVal).doubleValue();
+            doubles[pos] = (Double) cVal;
         } else if (i.dataType() == DataTypes.BIGINTEGER_TYPE) {
             bigIntegers[pos] = (BigInteger) cVal;
         } else if (i.dataType() == DataTypes.BIGDECIMAL_TYPE) {
@@ -179,7 +188,11 @@ public class StructInstance implements ITypedStruct {
         int nullPos = fieldMapping.fieldNullPos.get(attrName);
 
         if (nullFlags[nullPos]) {
-            return null;
+            if ( i.dataType().getTypeCategory() == DataTypes.TypeCategory.PRIMITIVE) {
+                return ((DataTypes.PrimitiveType) i.dataType()).nullValue();
+            } else {
+                return null;
+            }
         }
 
         if (i.dataType() == DataTypes.BOOLEAN_TYPE) {
@@ -231,6 +244,7 @@ public class StructInstance implements ITypedStruct {
         }
         int nullPos = fieldMapping.fieldNullPos.get(attrName);
         nullFlags[nullPos] = true;
+        explicitSets[nullPos] = true;
 
         int pos = fieldMapping.fieldPos.get(attrName);
 
@@ -240,6 +254,10 @@ public class StructInstance implements ITypedStruct {
             bigDecimals[pos] = null;
         } else if (i.dataType() == DataTypes.DATE_TYPE) {
             dates[pos] = null;
+        } else if (i.dataType() == DataTypes.INT_TYPE) {
+            ints[pos] = 0;
+        } else if (i.dataType() == DataTypes.BOOLEAN_TYPE) {
+            bools[pos] = false;
         } else if (i.dataType() == DataTypes.STRING_TYPE) {
             strings[pos] = null;
         } else if (i.dataType().getTypeCategory() == DataTypes.TypeCategory.ARRAY) {
@@ -263,10 +281,12 @@ public class StructInstance implements ITypedStruct {
      */
     @Override
     public Map<String, Object> getValuesMap() throws AtlasException {
-
         Map<String, Object> m = new HashMap<>();
         for (String attr : fieldMapping.fields.keySet()) {
-            m.put(attr, get(attr));
+//            int pos = fieldMapping.fieldNullPos.get(attr);
+//            if (  explicitSets[pos] ) {
+                m.put(attr, get(attr));
+//            }
         }
         return m;
     }
@@ -531,6 +551,7 @@ public class StructInstance implements ITypedStruct {
 
         nullFlags[nullPos] = false;
         bools[pos] = val;
+        explicitSets[nullPos] = true;
     }
 
     public void setByte(String attrName, byte val) throws AtlasException {
@@ -550,6 +571,7 @@ public class StructInstance implements ITypedStruct {
 
         nullFlags[nullPos] = false;
         bytes[pos] = val;
+        explicitSets[nullPos] = true;
     }
 
     public void setShort(String attrName, short val) throws AtlasException {
@@ -569,6 +591,7 @@ public class StructInstance implements ITypedStruct {
 
         nullFlags[nullPos] = false;
         shorts[pos] = val;
+        explicitSets[nullPos] = true;
     }
 
     public void setInt(String attrName, int val) throws AtlasException {
@@ -588,6 +611,7 @@ public class StructInstance implements ITypedStruct {
 
         nullFlags[nullPos] = false;
         ints[pos] = val;
+        explicitSets[nullPos] = true;
     }
 
     public void setLong(String attrName, long val) throws AtlasException {
@@ -607,6 +631,7 @@ public class StructInstance implements ITypedStruct {
 
         nullFlags[nullPos] = false;
         longs[pos] = val;
+        explicitSets[nullPos] = true;
     }
 
     public void setFloat(String attrName, float val) throws AtlasException {
@@ -626,6 +651,7 @@ public class StructInstance implements ITypedStruct {
 
         nullFlags[nullPos] = false;
         floats[pos] = val;
+        explicitSets[nullPos] = true;
     }
 
     public void setDouble(String attrName, double val) throws AtlasException {
@@ -645,6 +671,7 @@ public class StructInstance implements ITypedStruct {
 
         nullFlags[nullPos] = false;
         doubles[pos] = val;
+        explicitSets[nullPos] = true;
     }
 
     public void setBigInt(String attrName, BigInteger val) throws AtlasException {
@@ -664,6 +691,7 @@ public class StructInstance implements ITypedStruct {
 
         nullFlags[nullPos] = val == null;
         bigIntegers[pos] = val;
+        explicitSets[nullPos] = true;
     }
 
     public void setBigDecimal(String attrName, BigDecimal val) throws AtlasException {
@@ -683,6 +711,7 @@ public class StructInstance implements ITypedStruct {
 
         nullFlags[nullPos] = val == null;
         bigDecimals[pos] = val;
+        explicitSets[nullPos] = true;
     }
 
     public void setDate(String attrName, Date val) throws AtlasException {
@@ -702,9 +731,11 @@ public class StructInstance implements ITypedStruct {
 
         nullFlags[nullPos] = val == null;
         dates[pos] = val;
+        explicitSets[nullPos] = true;
     }
 
     public void setString(String attrName, String val) throws AtlasException {
+
         AttributeInfo i = fieldMapping.fields.get(attrName);
         if (i == null) {
             throw new AtlasException(String.format("Unknown field %s for Struct %s", attrName, getTypeName()));
@@ -721,6 +752,7 @@ public class StructInstance implements ITypedStruct {
 
         nullFlags[nullPos] = val == null;
         strings[pos] = val;
+        explicitSets[nullPos] = true;
     }
 
     @Override
@@ -742,7 +774,13 @@ public class StructInstance implements ITypedStruct {
         StructType structType = TypeSystem.getInstance().getDataType(StructType.class, getTypeName());
         structType.updateSignatureHash(digester, this);
         byte[] digest = digester.digest();
-        return MD5Utils.toString(digest);
+        return SHA256Utils.toString(digest);
+    }
+
+    @Override
+    public boolean isValueSet(final String attrName) throws AtlasException {
+        int nullPos = fieldMapping.fieldNullPos.get(attrName);
+        return explicitSets[nullPos];
     }
 
     @Override

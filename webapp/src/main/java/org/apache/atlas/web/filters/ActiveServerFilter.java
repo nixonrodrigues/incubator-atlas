@@ -23,9 +23,9 @@ import org.apache.atlas.web.service.ServiceState;
 import org.apache.hadoop.http.HtmlQuoting;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
 
 import javax.inject.Inject;
-import javax.inject.Singleton;
 import javax.servlet.Filter;
 import javax.servlet.FilterChain;
 import javax.servlet.FilterConfig;
@@ -37,7 +37,6 @@ import javax.servlet.http.HttpServletResponse;
 import javax.ws.rs.HttpMethod;
 import javax.ws.rs.core.HttpHeaders;
 import java.io.IOException;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * A servlet {@link Filter} that redirects web requests from a passive Atlas server instance to an active one.
@@ -47,7 +46,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * an error SERVICE_UNAVAILABLE. Identification of this state is carried out using
  * {@link ServiceState} and {@link ActiveInstanceState}.
  */
-@Singleton
+@Component
 public class ActiveServerFilter implements Filter {
 
     private static final Logger LOG = LoggerFactory.getLogger(ActiveServerFilter.class);
@@ -113,9 +112,8 @@ public class ActiveServerFilter implements Filter {
 
     private void handleRedirect(HttpServletRequest servletRequest, HttpServletResponse httpServletResponse,
                                 String activeServerAddress) throws IOException {
-        HttpServletRequest httpServletRequest = servletRequest;
-        String requestURI = httpServletRequest.getRequestURI();
-        String queryString = httpServletRequest.getQueryString();
+        String requestURI = servletRequest.getRequestURI();
+        String queryString = servletRequest.getQueryString();
         if ((queryString != null) && (!queryString.isEmpty())) {
             requestURI += "?" + queryString;
         }
@@ -127,7 +125,7 @@ public class ActiveServerFilter implements Filter {
         LOG.info("Not active. Redirecting to {}", redirectLocation);
         // A POST/PUT/DELETE require special handling by sending HTTP 307 instead of the regular 301/302.
         // Reference: http://stackoverflow.com/questions/2068418/whats-the-difference-between-a-302-and-a-307-redirect
-        if (isUnsafeHttpMethod(httpServletRequest)) {
+        if (isUnsafeHttpMethod(servletRequest)) {
             httpServletResponse.setHeader(HttpHeaders.LOCATION, redirectLocation);
             httpServletResponse.setStatus(HttpServletResponse.SC_TEMPORARY_REDIRECT);
         } else {

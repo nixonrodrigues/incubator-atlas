@@ -27,16 +27,12 @@ import org.apache.atlas.web.util.Servlets;
 import org.codehaus.jettison.json.JSONObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
 
 import javax.inject.Inject;
 import javax.inject.Singleton;
 import javax.servlet.http.HttpServletRequest;
-import javax.ws.rs.Consumes;
-import javax.ws.rs.GET;
-import javax.ws.rs.Path;
-import javax.ws.rs.PathParam;
-import javax.ws.rs.Produces;
-import javax.ws.rs.WebApplicationException;
+import javax.ws.rs.*;
 import javax.ws.rs.core.Context;
 import javax.ws.rs.core.Response;
 
@@ -45,6 +41,8 @@ import javax.ws.rs.core.Response;
  */
 @Path("lineage/hive")
 @Singleton
+@Service
+@Deprecated
 public class DataSetLineageResource {
 
     private static final Logger LOG = LoggerFactory.getLogger(DataSetLineageResource.class);
@@ -73,12 +71,15 @@ public class DataSetLineageResource {
     @Consumes(Servlets.JSON_MEDIA_TYPE)
     @Produces(Servlets.JSON_MEDIA_TYPE)
     public Response inputsGraph(@Context HttpServletRequest request, @PathParam("tableName") String tableName) {
-        LOG.info("Fetching lineage inputs graph for tableName={}", tableName);
+        if (LOG.isDebugEnabled()) {
+            LOG.debug("==> DataSetLineageResource.inputsGraph({})", tableName);
+        }
 
         AtlasPerfTracer perf = null;
+
         try {
             if (AtlasPerfTracer.isPerfTraceEnabled(PERF_LOG)) {
-                perf = AtlasPerfTracer.getPerfTracer(PERF_LOG, "DataSetLineageResource.inputsGraph(" + tableName + ")");
+                perf = AtlasPerfTracer.getPerfTracer(PERF_LOG, "DataSetLineageResource.inputsGraph(tableName=" + tableName + ")");
             }
 
             final String jsonResult = lineageService.getInputsGraph(tableName);
@@ -90,11 +91,14 @@ public class DataSetLineageResource {
 
             return Response.ok(response).build();
         } catch (EntityNotFoundException e) {
-            LOG.error("table entity not found for {}", tableName, e);
+            LOG.error("table entity not found for {}", tableName);
             throw new WebApplicationException(Servlets.getErrorResponse(e, Response.Status.NOT_FOUND));
         } catch (DiscoveryException | IllegalArgumentException e) {
             LOG.error("Unable to get lineage inputs graph for table {}", tableName, e);
             throw new WebApplicationException(Servlets.getErrorResponse(e, Response.Status.BAD_REQUEST));
+        } catch (WebApplicationException e) {
+            LOG.error("Unable to get lineage inputs graph for table {}", tableName, e);
+            throw e;
         } catch (Throwable e) {
             LOG.error("Unable to get lineage inputs graph for table {}", tableName, e);
             throw new WebApplicationException(Servlets.getErrorResponse(e, Response.Status.INTERNAL_SERVER_ERROR));
@@ -113,12 +117,15 @@ public class DataSetLineageResource {
     @Consumes(Servlets.JSON_MEDIA_TYPE)
     @Produces(Servlets.JSON_MEDIA_TYPE)
     public Response outputsGraph(@Context HttpServletRequest request, @PathParam("tableName") String tableName) {
-        LOG.info("Fetching lineage outputs graph for tableName={}", tableName);
+        if (LOG.isDebugEnabled()) {
+            LOG.debug("==> DataSetLineageResource.outputsGraph({})", tableName);
+        }
 
         AtlasPerfTracer perf = null;
+
         try {
             if (AtlasPerfTracer.isPerfTraceEnabled(PERF_LOG)) {
-                perf = AtlasPerfTracer.getPerfTracer(PERF_LOG, "DataSetLineageResource.outputsGraph(" + tableName + ")");
+                perf = AtlasPerfTracer.getPerfTracer(PERF_LOG, "DataSetLineageResource.outputsGraph(tableName=" + tableName + ")");
             }
 
             final String jsonResult = lineageService.getOutputsGraph(tableName);
@@ -130,11 +137,14 @@ public class DataSetLineageResource {
 
             return Response.ok(response).build();
         } catch (EntityNotFoundException e) {
-            LOG.error("table entity not found for {}", tableName, e);
+            LOG.error("table entity not found for {}", tableName);
             throw new WebApplicationException(Servlets.getErrorResponse(e, Response.Status.NOT_FOUND));
         } catch (DiscoveryException | IllegalArgumentException e) {
             LOG.error("Unable to get lineage outputs graph for table {}", tableName, e);
             throw new WebApplicationException(Servlets.getErrorResponse(e, Response.Status.BAD_REQUEST));
+        } catch (WebApplicationException e) {
+            LOG.error("Unable to get lineage outputs graph for table {}", tableName, e);
+            throw e;
         } catch (Throwable e) {
             LOG.error("Unable to get lineage outputs graph for table {}", tableName, e);
             throw new WebApplicationException(Servlets.getErrorResponse(e, Response.Status.INTERNAL_SERVER_ERROR));
@@ -153,12 +163,15 @@ public class DataSetLineageResource {
     @Consumes(Servlets.JSON_MEDIA_TYPE)
     @Produces(Servlets.JSON_MEDIA_TYPE)
     public Response schema(@Context HttpServletRequest request, @PathParam("tableName") String tableName) {
-        LOG.info("Fetching schema for tableName={}", tableName);
+        if (LOG.isDebugEnabled()) {
+            LOG.debug("==> DataSetLineageResource.schema({})", tableName);
+        }
 
         AtlasPerfTracer perf = null;
+
         try {
             if (AtlasPerfTracer.isPerfTraceEnabled(PERF_LOG)) {
-                perf = AtlasPerfTracer.getPerfTracer(PERF_LOG, "DataSetLineageResource.schema(" + tableName + ")");
+                perf = AtlasPerfTracer.getPerfTracer(PERF_LOG, "DataSetLineageResource.schema(tableName=" + tableName + ")");
             }
 
             final String jsonResult = lineageService.getSchema(tableName);
@@ -170,11 +183,14 @@ public class DataSetLineageResource {
 
             return Response.ok(response).build();
         } catch (EntityNotFoundException e) {
-            LOG.error("table entity not found for {}", tableName, e);
+            LOG.error("table entity not found for {}", tableName);
             throw new WebApplicationException(Servlets.getErrorResponse(e, Response.Status.NOT_FOUND));
         } catch (DiscoveryException | IllegalArgumentException e) {
             LOG.error("Unable to get schema for table {}", tableName, e);
             throw new WebApplicationException(Servlets.getErrorResponse(e, Response.Status.BAD_REQUEST));
+        } catch (WebApplicationException e) {
+            LOG.error("Unable to get schema for table {}", tableName, e);
+            throw e;
         } catch (Throwable e) {
             LOG.error("Unable to get schema for table {}", tableName, e);
             throw new WebApplicationException(Servlets.getErrorResponse(e, Response.Status.INTERNAL_SERVER_ERROR));

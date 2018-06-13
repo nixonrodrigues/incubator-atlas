@@ -19,8 +19,8 @@
 package org.apache.atlas.repository.graphdb;
 
 /**
- * Enumeration of the supported versions of Gremlin
- * 
+ * Enumeration of the supported versions of Gremlin.
+ *
  *
  */
 public enum GremlinVersion {

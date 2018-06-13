@@ -19,20 +19,30 @@
 define(['require',
     'utils/Globals',
     'collection/BaseCollection',
-    'models/VLineage'
-], function(require, Globals, BaseCollection, VLineage) {
+    'models/VLineage',
+    'utils/UrlLinks'
+], function(require, Globals, BaseCollection, VLineage, UrlLinks) {
     'use strict';
     var VLineageList = BaseCollection.extend(
         //Prototypal attributes
         {
-            url: Globals.baseURL,
+            url: UrlLinks.baseURL,
 
             model: VLineage,
 
             initialize: function() {
                 this.modelName = 'VLineage';
                 this.modelAttrName = 'results';
-                this.bindErrorEvents();
+            },
+            getLineage: function(id, options) {
+                var url = UrlLinks.lineageApiUrl(id);
+
+                options = _.extend({
+                    contentType: 'application/json',
+                    dataType: 'json'
+                }, options);
+
+                return this.constructor.nonCrudOperation.call(this, url, 'GET', options);
             }
         },
         //Static Class Members

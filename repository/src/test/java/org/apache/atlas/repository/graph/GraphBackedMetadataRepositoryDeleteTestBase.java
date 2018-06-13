@@ -20,16 +20,19 @@ package org.apache.atlas.repository.graph;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
-import com.thinkaurelius.titan.core.TitanGraph;
-import com.thinkaurelius.titan.core.util.TitanCleanup;
-import com.tinkerpop.blueprints.Vertex;
 import org.apache.atlas.AtlasClient;
 import org.apache.atlas.AtlasException;
-import org.apache.atlas.RepositoryMetadataModule;
+import org.apache.atlas.CreateUpdateEntitiesResult;
 import org.apache.atlas.RequestContext;
+import org.apache.atlas.TestModules;
 import org.apache.atlas.TestUtils;
+import org.apache.atlas.model.legacy.EntityResult;
 import org.apache.atlas.repository.Constants;
+import org.apache.atlas.repository.MetadataRepository;
 import org.apache.atlas.repository.RepositoryException;
+import org.apache.atlas.repository.graphdb.AtlasGraph;
+import org.apache.atlas.repository.graphdb.AtlasVertex;
+import org.apache.atlas.type.AtlasTypeRegistry;
 import org.apache.atlas.typesystem.IReferenceableInstance;
 import org.apache.atlas.typesystem.IStruct;
 import org.apache.atlas.typesystem.ITypedReferenceableInstance;
@@ -37,18 +40,11 @@ import org.apache.atlas.typesystem.ITypedStruct;
 import org.apache.atlas.typesystem.Referenceable;
 import org.apache.atlas.typesystem.Struct;
 import org.apache.atlas.typesystem.TypesDef;
+import org.apache.atlas.typesystem.exception.EntityExistsException;
 import org.apache.atlas.typesystem.exception.EntityNotFoundException;
 import org.apache.atlas.typesystem.exception.NullRequiredAttributeException;
 import org.apache.atlas.typesystem.persistence.Id;
-import org.apache.atlas.typesystem.types.AttributeDefinition;
-import org.apache.atlas.typesystem.types.ClassType;
-import org.apache.atlas.typesystem.types.DataTypes;
-import org.apache.atlas.typesystem.types.EnumTypeDefinition;
-import org.apache.atlas.typesystem.types.HierarchicalTypeDefinition;
-import org.apache.atlas.typesystem.types.Multiplicity;
-import org.apache.atlas.typesystem.types.StructTypeDefinition;
-import org.apache.atlas.typesystem.types.TraitType;
-import org.apache.atlas.typesystem.types.TypeSystem;
+import org.apache.atlas.typesystem.types.*;
 import org.apache.atlas.typesystem.types.utils.TypesUtil;
 import org.testng.Assert;
 import org.testng.annotations.AfterClass;
@@ -65,15 +61,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import static org.apache.atlas.TestUtils.COLUMNS_ATTR_NAME;
-import static org.apache.atlas.TestUtils.COLUMN_TYPE;
-import static org.apache.atlas.TestUtils.NAME;
-import static org.apache.atlas.TestUtils.PII;
-import static org.apache.atlas.TestUtils.PROCESS_TYPE;
-import static org.apache.atlas.TestUtils.TABLE_TYPE;
-import static org.apache.atlas.TestUtils.createColumnEntity;
-import static org.apache.atlas.TestUtils.createDBEntity;
-import static org.apache.atlas.TestUtils.createTableEntity;
+import static org.apache.atlas.TestUtils.*;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertNotEquals;
 import static org.testng.Assert.assertTrue;
@@ -85,49 +73,64 @@ import static org.testng.Assert.fail;
  * Guice loads the dependencies and injects the necessary objects
  *
  */
-@Guice(modules = RepositoryMetadataModule.class)
+@Guice(modules = TestModules.TestOnlyModule.class)
 public abstract class GraphBackedMetadataRepositoryDeleteTestBase {
 
-    @Inject
-    private GraphProvider<TitanGraph> graphProvider;
-
-    protected GraphBackedMetadataRepository repositoryService;
+    protected MetadataRepository repositoryService;
 
     private TypeSystem typeSystem;
 
+    private ClassType compositeMapOwnerType;
+
+    private ClassType compositeMapValueType;
+
+    @Inject
+    AtlasGraph atlasGraph;
+
     @BeforeClass
     public void setUp() throws Exception {
+
         typeSystem = TypeSystem.getInstance();
         typeSystem.reset();
 
-        new GraphBackedSearchIndexer(graphProvider);
+        new GraphBackedSearchIndexer(new AtlasTypeRegistry());
+        final GraphBackedMetadataRepository delegate = new GraphBackedMetadataRepository(getDeleteHandler(typeSystem), atlasGraph);
 
-        repositoryService = new GraphBackedMetadataRepository(graphProvider, getDeleteHandler(typeSystem));
+        repositoryService = TestUtils.addTransactionWrapper(delegate);
 
         TestUtils.defineDeptEmployeeTypes(typeSystem);
         TestUtils.createHiveTypes(typeSystem);
+
+        // Define type for map value.
+        HierarchicalTypeDefinition<ClassType> mapValueDef = TypesUtil.createClassTypeDef("CompositeMapValue",
+            ImmutableSet.<String>of(),
+            TypesUtil.createUniqueRequiredAttrDef(NAME, DataTypes.STRING_TYPE));
+
+        // Define type with map where the value is a composite class reference to MapValue.
+        HierarchicalTypeDefinition<ClassType> mapOwnerDef = TypesUtil.createClassTypeDef("CompositeMapOwner",
+            ImmutableSet.<String>of(),
+            TypesUtil.createUniqueRequiredAttrDef(NAME, DataTypes.STRING_TYPE),
+            new AttributeDefinition("map", DataTypes.mapTypeName(DataTypes.STRING_TYPE.getName(),
+                        "CompositeMapValue"), Multiplicity.OPTIONAL, true, null));
+        TypesDef typesDef = TypesUtil.getTypesDef(ImmutableList.<EnumTypeDefinition>of(),
+            ImmutableList.<StructTypeDefinition>of(), ImmutableList.<HierarchicalTypeDefinition<TraitType>>of(),
+            ImmutableList.of(mapOwnerDef, mapValueDef));
+        typeSystem.defineTypes(typesDef);
+        compositeMapOwnerType = typeSystem.getDataType(ClassType.class, "CompositeMapOwner");
+        compositeMapValueType = typeSystem.getDataType(ClassType.class, "CompositeMapValue");
     }
 
     abstract DeleteHandler getDeleteHandler(TypeSystem typeSystem);
 
     @BeforeMethod
     public void setupContext() {
-        RequestContext.createContext();
+        TestUtils.resetRequestContext();
     }
 
     @AfterClass
     public void tearDown() throws Exception {
         TypeSystem.getInstance().reset();
-        try {
-            graphProvider.get().shutdown();
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-        try {
-            TitanCleanup.clear(graphProvider.get());
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+//        AtlasGraphProvider.cleanup();
     }
 
     @Test
@@ -195,7 +198,7 @@ public abstract class GraphBackedMetadataRepositoryDeleteTestBase {
         table.set(COLUMNS_ATTR_NAME, Arrays.asList(new Id(colId, 0, COLUMN_TYPE)));
         String tableId = createInstance(table);
 
-        AtlasClient.EntityResult entityResult = deleteEntities(colId);
+        EntityResult entityResult = deleteEntities(colId);
         assertEquals(entityResult.getDeletedEntities().size(), 1);
         assertEquals(entityResult.getDeletedEntities().get(0), colId);
         assertEquals(entityResult.getUpdateEntities().size(), 1);
@@ -228,7 +231,7 @@ public abstract class GraphBackedMetadataRepositoryDeleteTestBase {
 
     protected abstract void assertEntityDeleted(String id) throws Exception;
 
-    private AtlasClient.EntityResult deleteEntities(String... id) throws Exception {
+    private EntityResult deleteEntities(String... id) throws Exception {
         RequestContext.createContext();
         return repositoryService.deleteEntities(Arrays.asList(id));
     }
@@ -236,7 +239,8 @@ public abstract class GraphBackedMetadataRepositoryDeleteTestBase {
     private String createInstance(Referenceable entity) throws Exception {
         ClassType dataType = typeSystem.getDataType(ClassType.class, entity.getTypeName());
         ITypedReferenceableInstance instance = dataType.convert(entity, Multiplicity.REQUIRED);
-        List<String> results = repositoryService.createEntities(instance);
+        CreateUpdateEntitiesResult result = repositoryService.createEntities(instance);
+        List<String> results = result.getCreatedEntities();
         return results.get(results.size() - 1);
     }
 
@@ -261,7 +265,7 @@ public abstract class GraphBackedMetadataRepositoryDeleteTestBase {
         String colId = columns.get(0).getId()._getId();
         String tableId = tableInstance.getId()._getId();
 
-        AtlasClient.EntityResult entityResult = deleteEntities(colId);
+        EntityResult entityResult = deleteEntities(colId);
         assertEquals(entityResult.getDeletedEntities().size(), 1);
         assertEquals(entityResult.getDeletedEntities().get(0), colId);
         assertEquals(entityResult.getUpdateEntities().size(), 1);
@@ -339,53 +343,30 @@ public abstract class GraphBackedMetadataRepositoryDeleteTestBase {
         assertVerticesDeleted(getVertices(Constants.ENTITY_TYPE_PROPERTY_KEY, "SecurityClearance"));
     }
 
-    protected abstract void assertVerticesDeleted(List<Vertex> vertices);
+    protected abstract void assertVerticesDeleted(List<AtlasVertex> vertices);
 
     @Test
     public void testDeleteEntitiesWithCompositeMapReference() throws Exception {
-        // Define type for map value.
-        HierarchicalTypeDefinition<ClassType> mapValueDef = TypesUtil.createClassTypeDef("CompositeMapValue", 
-            ImmutableSet.<String>of(),
-            TypesUtil.createOptionalAttrDef("attr1", DataTypes.STRING_TYPE));
-
-        // Define type with map where the value is a composite class reference to MapValue.
-        HierarchicalTypeDefinition<ClassType> mapOwnerDef = TypesUtil.createClassTypeDef("CompositeMapOwner", 
-            ImmutableSet.<String>of(),
-            new AttributeDefinition("map", DataTypes.mapTypeName(DataTypes.STRING_TYPE.getName(),
-                        "CompositeMapValue"), Multiplicity.OPTIONAL, true, null));
-        TypesDef typesDef = TypesUtil.getTypesDef(ImmutableList.<EnumTypeDefinition>of(),
-            ImmutableList.<StructTypeDefinition>of(), ImmutableList.<HierarchicalTypeDefinition<TraitType>>of(),
-            ImmutableList.of(mapOwnerDef, mapValueDef));
-        typeSystem.defineTypes(typesDef);
-        ClassType mapOwnerType = typeSystem.getDataType(ClassType.class, "CompositeMapOwner");
-        ClassType mapValueType = typeSystem.getDataType(ClassType.class, "CompositeMapValue");
-
         // Create instances of MapOwner and MapValue.
         // Set MapOwner.map with one entry that references MapValue instance.
-        ITypedReferenceableInstance mapOwnerInstance = mapOwnerType.createInstance();
-        ITypedReferenceableInstance mapValueInstance = mapValueType.createInstance();
-        mapOwnerInstance.set("map", Collections.singletonMap("value1", mapValueInstance));
-        List<String> createEntitiesResult = repositoryService.createEntities(mapOwnerInstance, mapValueInstance);
-        Assert.assertEquals(createEntitiesResult.size(), 2);
-        List<String> guids = repositoryService.getEntityList("CompositeMapOwner");
-        Assert.assertEquals(guids.size(), 1);
-        String mapOwnerGuid = guids.get(0);
+        ITypedReferenceableInstance entityDefinition = createMapOwnerAndValueEntities();
+        String mapOwnerGuid = entityDefinition.getId()._getId();
 
         // Verify MapOwner.map attribute has expected value.
-        mapOwnerInstance = repositoryService.getEntityDefinition(mapOwnerGuid);
+        ITypedReferenceableInstance mapOwnerInstance = repositoryService.getEntityDefinition(mapOwnerGuid);
         Object object = mapOwnerInstance.get("map");
         Assert.assertNotNull(object);
         Assert.assertTrue(object instanceof Map);
         Map<String, ITypedReferenceableInstance> map = (Map<String, ITypedReferenceableInstance>)object;
         Assert.assertEquals(map.size(), 1);
-        mapValueInstance = map.get("value1");
+        ITypedReferenceableInstance mapValueInstance = map.get("value1");
         Assert.assertNotNull(mapValueInstance);
         String mapValueGuid = mapValueInstance.getId()._getId();
-        String edgeLabel = GraphHelper.getEdgeLabel(mapOwnerType, mapOwnerType.fieldMapping.fields.get("map"));
+        String edgeLabel = GraphHelper.getEdgeLabel(compositeMapOwnerType, compositeMapOwnerType.fieldMapping.fields.get("map"));
         String mapEntryLabel = edgeLabel + "." + "value1";
         AtlasEdgeLabel atlasEdgeLabel = new AtlasEdgeLabel(mapEntryLabel);
-        Vertex mapOwnerVertex = GraphHelper.getInstance().getVertexForGUID(mapOwnerGuid);
-        object = mapOwnerVertex.getProperty(atlasEdgeLabel.getQualifiedMapKey());
+        AtlasVertex mapOwnerVertex = GraphHelper.getInstance().getVertexForGUID(mapOwnerGuid);
+        object = mapOwnerVertex.getProperty(atlasEdgeLabel.getQualifiedMapKey(), Object.class);
         Assert.assertNotNull(object);
 
         List<String> deletedEntities = deleteEntities(mapOwnerGuid).getDeletedEntities();
@@ -397,9 +378,24 @@ public abstract class GraphBackedMetadataRepositoryDeleteTestBase {
         assertEntityDeleted(mapValueGuid);
     }
 
-    private AtlasClient.EntityResult updatePartial(ITypedReferenceableInstance entity) throws RepositoryException {
+    private ITypedReferenceableInstance createMapOwnerAndValueEntities()
+        throws AtlasException, RepositoryException, EntityExistsException {
+
+        ITypedReferenceableInstance mapOwnerInstance = compositeMapOwnerType.createInstance();
+        mapOwnerInstance.set(NAME, TestUtils.randomString());
+        ITypedReferenceableInstance mapValueInstance = compositeMapValueType.createInstance();
+        mapValueInstance.set(NAME, TestUtils.randomString());
+        mapOwnerInstance.set("map", Collections.singletonMap("value1", mapValueInstance));
+        List<String> createEntitiesResult = repositoryService.createEntities(mapOwnerInstance, mapValueInstance).getCreatedEntities();
+        Assert.assertEquals(createEntitiesResult.size(), 2);
+        ITypedReferenceableInstance entityDefinition = repositoryService.getEntityDefinition("CompositeMapOwner",
+            NAME, mapOwnerInstance.get(NAME));
+        return entityDefinition;
+    }
+
+    private EntityResult updatePartial(ITypedReferenceableInstance entity) throws RepositoryException {
         RequestContext.createContext();
-        return repositoryService.updatePartial(entity);
+        return repositoryService.updatePartial(entity).getEntityResult();
     }
 
     @Test
@@ -413,21 +409,21 @@ public abstract class GraphBackedMetadataRepositoryDeleteTestBase {
 
         ITypedReferenceableInstance max = repositoryService.getEntityDefinition(nameGuidMap.get("Max"));
         String maxGuid = max.getId()._getId();
-        Vertex vertex = GraphHelper.getInstance().getVertexForGUID(maxGuid);
-        Long creationTimestamp = vertex.getProperty(Constants.TIMESTAMP_PROPERTY_KEY);
+        AtlasVertex vertex = GraphHelper.getInstance().getVertexForGUID(maxGuid);
+        Long creationTimestamp = GraphHelper.getSingleValuedProperty(vertex, Constants.TIMESTAMP_PROPERTY_KEY, Long.class);
         Assert.assertNotNull(creationTimestamp);
 
-        Long modificationTimestampPreUpdate = vertex.getProperty(Constants.MODIFICATION_TIMESTAMP_PROPERTY_KEY);
+        Long modificationTimestampPreUpdate = GraphHelper.getSingleValuedProperty(vertex, Constants.MODIFICATION_TIMESTAMP_PROPERTY_KEY, Long.class);
         Assert.assertNotNull(modificationTimestampPreUpdate);
 
         ITypedReferenceableInstance jane = repositoryService.getEntityDefinition(nameGuidMap.get("Jane"));
-        Id janeGuid = jane.getId();
+        Id janeId = jane.getId();
 
         // Update max's mentor reference to john.
         ClassType personType = typeSystem.getDataType(ClassType.class, "Person");
         ITypedReferenceableInstance maxEntity = personType.createInstance(max.getId());
         maxEntity.set("mentor", johnGuid);
-        AtlasClient.EntityResult entityResult = updatePartial(maxEntity);
+        EntityResult entityResult = updatePartial(maxEntity);
         assertEquals(entityResult.getUpdateEntities().size(), 1);
         assertTrue(entityResult.getUpdateEntities().contains(maxGuid));
 
@@ -438,12 +434,12 @@ public abstract class GraphBackedMetadataRepositoryDeleteTestBase {
 
         // Verify modification timestamp was updated.
         vertex = GraphHelper.getInstance().getVertexForGUID(maxGuid);
-        Long modificationTimestampPostUpdate = vertex.getProperty(Constants.MODIFICATION_TIMESTAMP_PROPERTY_KEY);
+        Long modificationTimestampPostUpdate = GraphHelper.getSingleValuedProperty(vertex, Constants.MODIFICATION_TIMESTAMP_PROPERTY_KEY, Long.class);
         Assert.assertNotNull(modificationTimestampPostUpdate);
         Assert.assertTrue(creationTimestamp < modificationTimestampPostUpdate);
 
         // Update max's mentor reference to jane.
-        maxEntity.set("mentor", janeGuid);
+        maxEntity.set("mentor", janeId);
         entityResult = updatePartial(maxEntity);
         assertEquals(entityResult.getUpdateEntities().size(), 1);
         assertTrue(entityResult.getUpdateEntities().contains(maxGuid));
@@ -451,30 +447,37 @@ public abstract class GraphBackedMetadataRepositoryDeleteTestBase {
         // Verify the update was applied correctly - jane should now be max's mentor.
         max = repositoryService.getEntityDefinition(maxGuid);
         refTarget = (ITypedReferenceableInstance) max.get("mentor");
-        Assert.assertEquals(refTarget.getId()._getId(), janeGuid._getId());
+        Assert.assertEquals(refTarget.getId()._getId(), janeId._getId());
 
         // Verify modification timestamp was updated.
         vertex = GraphHelper.getInstance().getVertexForGUID(maxGuid);
-        Long modificationTimestampPost2ndUpdate = vertex.getProperty(Constants.MODIFICATION_TIMESTAMP_PROPERTY_KEY);
+        Long modificationTimestampPost2ndUpdate = GraphHelper.getSingleValuedProperty(vertex, Constants.MODIFICATION_TIMESTAMP_PROPERTY_KEY, Long.class);
         Assert.assertNotNull(modificationTimestampPost2ndUpdate);
         Assert.assertTrue(modificationTimestampPostUpdate < modificationTimestampPost2ndUpdate);
 
         ITypedReferenceableInstance julius = repositoryService.getEntityDefinition(nameGuidMap.get("Julius"));
-        Id juliusGuid = julius.getId();
+        Id juliusId = julius.getId();
         maxEntity = personType.createInstance(max.getId());
-        maxEntity.set("manager", juliusGuid);
+        maxEntity.set("manager", juliusId);
         entityResult = updatePartial(maxEntity);
-        //TODO ATLAS-499 should have updated julius' subordinates
-        assertEquals(entityResult.getUpdateEntities().size(), 2);
+        // Verify julius' subordinates were updated.
+        assertEquals(entityResult.getUpdateEntities().size(), 3);
         assertTrue(entityResult.getUpdateEntities().contains(maxGuid));
-        assertTrue(entityResult.getUpdateEntities().contains(janeGuid._getId()));
+        assertTrue(entityResult.getUpdateEntities().containsAll(Arrays.asList(maxGuid, janeId._getId(), juliusId._getId())));
 
         // Verify the update was applied correctly - julius should now be max's manager.
         max = repositoryService.getEntityDefinition(maxGuid);
         refTarget = (ITypedReferenceableInstance) max.get("manager");
-        Assert.assertEquals(refTarget.getId()._getId(), juliusGuid._getId());
+        Assert.assertEquals(refTarget.getId()._getId(), juliusId._getId());
+        Assert.assertEquals(refTarget.getId()._getId(), juliusId._getId());
+        julius = repositoryService.getEntityDefinition(nameGuidMap.get("Julius"));
+        Object object = julius.get("subordinates");
+        Assert.assertTrue(object instanceof List);
+        List<ITypedReferenceableInstance> refValues = (List<ITypedReferenceableInstance>) object;
+        Assert.assertEquals(refValues.size(), 1);
+        Assert.assertTrue(refValues.contains(max.getId()));
 
-        assertTestUpdateEntity_MultiplicityOneNonCompositeReference(janeGuid._getId());
+        assertTestUpdateEntity_MultiplicityOneNonCompositeReference(janeId._getId());
     }
 
     protected abstract void assertTestUpdateEntity_MultiplicityOneNonCompositeReference(String janeGuid) throws Exception;
@@ -482,7 +485,7 @@ public abstract class GraphBackedMetadataRepositoryDeleteTestBase {
     /**
      * Verify deleting an entity which is contained by another
      * entity through a bi-directional composite reference.
-     * 
+     *
      * @throws Exception
      */
     @Test
@@ -513,7 +516,7 @@ public abstract class GraphBackedMetadataRepositoryDeleteTestBase {
         Assert.assertTrue(subordinateIds.contains(maxGuid));
 
 
-        AtlasClient.EntityResult entityResult = deleteEntities(maxGuid);
+        EntityResult entityResult = deleteEntities(maxGuid);
         ITypedReferenceableInstance john = repositoryService.getEntityDefinition("Person", "name", "John");
 
         assertEquals(entityResult.getDeletedEntities().size(), 1);
@@ -561,7 +564,7 @@ public abstract class GraphBackedMetadataRepositoryDeleteTestBase {
         String columnGuid = columns.get(0).getId()._getId();
 
         // Delete the column.
-        AtlasClient.EntityResult entityResult = deleteEntities(columnGuid);
+        EntityResult entityResult = deleteEntities(columnGuid);
         assertEquals(entityResult.getDeletedEntities().size(), 1);
         Assert.assertTrue(entityResult.getDeletedEntities().contains(columnGuid));
         assertEquals(entityResult.getUpdateEntities().size(), 1);
@@ -584,21 +587,21 @@ public abstract class GraphBackedMetadataRepositoryDeleteTestBase {
     @Test
     public void testDisconnectUnidirectionalArrayReferenceFromStructAndTraitTypes() throws Exception {
         // Define class types.
-        HierarchicalTypeDefinition<ClassType> structTargetDef = TypesUtil.createClassTypeDef("StructTarget", 
+        HierarchicalTypeDefinition<ClassType> structTargetDef = TypesUtil.createClassTypeDef("StructTarget",
             ImmutableSet.<String>of(), TypesUtil.createOptionalAttrDef("attr1", DataTypes.STRING_TYPE));
-        HierarchicalTypeDefinition<ClassType> traitTargetDef = TypesUtil.createClassTypeDef("TraitTarget", 
+        HierarchicalTypeDefinition<ClassType> traitTargetDef = TypesUtil.createClassTypeDef("TraitTarget",
             ImmutableSet.<String>of(), TypesUtil.createOptionalAttrDef("attr1", DataTypes.STRING_TYPE));
-        HierarchicalTypeDefinition<ClassType> structContainerDef = TypesUtil.createClassTypeDef("StructContainer", 
+        HierarchicalTypeDefinition<ClassType> structContainerDef = TypesUtil.createClassTypeDef("StructContainer",
             ImmutableSet.<String>of(), TypesUtil.createOptionalAttrDef("struct", "TestStruct"));
 
         // Define struct and trait types which have a unidirectional array reference
         // to a class type.
-        StructTypeDefinition structDef = TypesUtil.createStructTypeDef("TestStruct", 
+        StructTypeDefinition structDef = TypesUtil.createStructTypeDef("TestStruct",
             new AttributeDefinition("target", DataTypes.arrayTypeName("StructTarget"), Multiplicity.OPTIONAL, false, null),
             new AttributeDefinition("nestedStructs", DataTypes.arrayTypeName("NestedStruct"), Multiplicity.OPTIONAL, false, null));
-        StructTypeDefinition nestedStructDef = TypesUtil.createStructTypeDef("NestedStruct", 
+        StructTypeDefinition nestedStructDef = TypesUtil.createStructTypeDef("NestedStruct",
             TypesUtil.createOptionalAttrDef("attr1", DataTypes.STRING_TYPE));
-        HierarchicalTypeDefinition<TraitType> traitDef = TypesUtil.createTraitTypeDef("TestTrait", ImmutableSet.<String>of(), 
+        HierarchicalTypeDefinition<TraitType> traitDef = TypesUtil.createTraitTypeDef("TestTrait", ImmutableSet.<String>of(),
             new AttributeDefinition("target", DataTypes.arrayTypeName("TraitTarget"), Multiplicity.OPTIONAL, false, null));
 
         TypesDef typesDef = TypesUtil.getTypesDef(ImmutableList.<EnumTypeDefinition>of(), ImmutableList.of(structDef, nestedStructDef),
@@ -620,15 +623,15 @@ public abstract class GraphBackedMetadataRepositoryDeleteTestBase {
         ClassType traitTargetType = typeSystem.getDataType(ClassType.class, "TraitTarget");
         ClassType structContainerType = typeSystem.getDataType(ClassType.class, "StructContainer");
 
-        ITypedReferenceableInstance structTargetConvertedEntity = 
+        ITypedReferenceableInstance structTargetConvertedEntity =
             structTargetType.convert(structTargetEntity, Multiplicity.REQUIRED);
-        ITypedReferenceableInstance traitTargetConvertedEntity = 
+        ITypedReferenceableInstance traitTargetConvertedEntity =
             traitTargetType.convert(traitTargetEntity, Multiplicity.REQUIRED);
         ITypedReferenceableInstance structContainerConvertedEntity =
             structContainerType.convert(structContainerEntity, Multiplicity.REQUIRED);
 
         List<String> guids = repositoryService.createEntities(
-            structTargetConvertedEntity, traitTargetConvertedEntity, structContainerConvertedEntity);
+            structTargetConvertedEntity, traitTargetConvertedEntity, structContainerConvertedEntity).getCreatedEntities();
         Assert.assertEquals(guids.size(), 3);
 
         guids = repositoryService.getEntityList("StructTarget");
@@ -673,7 +676,7 @@ public abstract class GraphBackedMetadataRepositoryDeleteTestBase {
         Assert.assertEquals(refList.get(0).getId()._getId(), traitTargetGuid);
 
         // Delete the entities that are targets of the struct and trait instances.
-        AtlasClient.EntityResult entityResult = deleteEntities(structTargetGuid, traitTargetGuid);
+        EntityResult entityResult = deleteEntities(structTargetGuid, traitTargetGuid);
         Assert.assertEquals(entityResult.getDeletedEntities().size(), 2);
         Assert.assertTrue(entityResult.getDeletedEntities().containsAll(Arrays.asList(structTargetGuid, traitTargetGuid)));
         assertEntityDeleted(structTargetGuid);
@@ -706,13 +709,13 @@ public abstract class GraphBackedMetadataRepositoryDeleteTestBase {
     @Test
     public void testDisconnectMapReferenceFromClassType() throws Exception {
         // Define type for map value.
-        HierarchicalTypeDefinition<ClassType> mapValueDef = TypesUtil.createClassTypeDef("MapValue", 
+        HierarchicalTypeDefinition<ClassType> mapValueDef = TypesUtil.createClassTypeDef("MapValue",
             ImmutableSet.<String>of(),
             new AttributeDefinition("biMapOwner", "MapOwner", Multiplicity.OPTIONAL, false, "biMap"));
 
         // Define type with unidirectional and bidirectional map references,
         // where the map value is a class reference to MapValue.
-        HierarchicalTypeDefinition<ClassType> mapOwnerDef = TypesUtil.createClassTypeDef("MapOwner", 
+        HierarchicalTypeDefinition<ClassType> mapOwnerDef = TypesUtil.createClassTypeDef("MapOwner",
             ImmutableSet.<String>of(),
             new AttributeDefinition("map", DataTypes.mapTypeName(DataTypes.STRING_TYPE.getName(),
                         "MapValue"), Multiplicity.OPTIONAL, false, null),
@@ -733,7 +736,7 @@ public abstract class GraphBackedMetadataRepositoryDeleteTestBase {
         mapOwnerInstance.set("biMap", Collections.singletonMap("value1", mapValueInstance));
         // Set biMapOwner reverse reference on MapValue.
         mapValueInstance.set("biMapOwner", mapOwnerInstance);
-        List<String> createEntitiesResult = repositoryService.createEntities(mapOwnerInstance, mapValueInstance);
+        List<String> createEntitiesResult = repositoryService.createEntities(mapOwnerInstance, mapValueInstance).getCreatedEntities();
         Assert.assertEquals(createEntitiesResult.size(), 2);
         List<String> guids = repositoryService.getEntityList("MapOwner");
         Assert.assertEquals(guids.size(), 1);
@@ -745,7 +748,7 @@ public abstract class GraphBackedMetadataRepositoryDeleteTestBase {
 
         // Verify MapOwner.map attribute has expected value.
         String mapValueGuid = null;
-        Vertex mapOwnerVertex = null;
+        AtlasVertex mapOwnerVertex = null;
         mapOwnerInstance = repositoryService.getEntityDefinition(mapOwnerGuid);
         for (String mapAttrName : Arrays.asList("map", "biMap")) {
             Object object = mapOwnerInstance.get(mapAttrName);
@@ -757,12 +760,12 @@ public abstract class GraphBackedMetadataRepositoryDeleteTestBase {
             Assert.assertNotNull(mapValueInstance);
             mapValueGuid = mapValueInstance.getId()._getId();
             mapOwnerVertex = GraphHelper.getInstance().getVertexForGUID(mapOwnerGuid);
-            object = mapOwnerVertex.getProperty(atlasEdgeLabel.getQualifiedMapKey());
+            object = mapOwnerVertex.getProperty(atlasEdgeLabel.getQualifiedMapKey(), Object.class);
             Assert.assertNotNull(object);
         }
 
         // Delete the map value instance.
-        // This should disconnect the references from the map owner instance. 
+        // This should disconnect the references from the map owner instance.
         deleteEntities(mapValueGuid);
         assertEntityDeleted(mapValueGuid);
         assertTestDisconnectMapReferenceFromClassType(mapOwnerGuid);
@@ -843,7 +846,7 @@ public abstract class GraphBackedMetadataRepositoryDeleteTestBase {
         ITypedReferenceableInstance mapOwnerInstance = mapOwnerType.createInstance();
         ITypedReferenceableInstance mapValueInstance = mapValueType.createInstance();
         mapOwnerInstance.set("map", Collections.singletonMap("value1", mapValueInstance));
-        List<String> createEntitiesResult = repositoryService.createEntities(mapOwnerInstance, mapValueInstance);
+        List<String> createEntitiesResult = repositoryService.createEntities(mapOwnerInstance, mapValueInstance).getCreatedEntities();
         Assert.assertEquals(createEntitiesResult.size(), 2);
         List<String> guids = repositoryService.getEntityList("RequiredMapOwner");
         Assert.assertEquals(guids.size(), 1);
@@ -865,8 +868,8 @@ public abstract class GraphBackedMetadataRepositoryDeleteTestBase {
         String edgeLabel = GraphHelper.getEdgeLabel(mapOwnerType, mapOwnerType.fieldMapping.fields.get("map"));
         String mapEntryLabel = edgeLabel + "." + "value1";
         AtlasEdgeLabel atlasEdgeLabel = new AtlasEdgeLabel(mapEntryLabel);
-        Vertex mapOwnerVertex = GraphHelper.getInstance().getVertexForGUID(mapOwnerGuid);
-        object = mapOwnerVertex.getProperty(atlasEdgeLabel.getQualifiedMapKey());
+        AtlasVertex mapOwnerVertex = GraphHelper.getInstance().getVertexForGUID(mapOwnerGuid);
+        object = mapOwnerVertex.getProperty(atlasEdgeLabel.getQualifiedMapKey(), Object.class);
         Assert.assertNotNull(object);
 
         // Verify deleting the target of required map attribute throws a NullRequiredAttributeException.
@@ -879,12 +882,229 @@ public abstract class GraphBackedMetadataRepositoryDeleteTestBase {
         }
     }
 
+    @Test
+    public void testLowerBoundsIgnoredOnDeletedEntities() throws Exception {
+
+        String hrDeptGuid = createHrDeptGraph();
+        ITypedReferenceableInstance hrDept = repositoryService.getEntityDefinition(hrDeptGuid);
+        Map<String, String> nameGuidMap = getEmployeeNameGuidMap(hrDept);
+
+        ITypedReferenceableInstance john = repositoryService.getEntityDefinition(nameGuidMap.get("John"));
+        String johnGuid = john.getId()._getId();
+
+        ITypedReferenceableInstance max = repositoryService.getEntityDefinition(nameGuidMap.get("Max"));
+        String maxGuid = max.getId()._getId();
+
+        ITypedReferenceableInstance jane = repositoryService.getEntityDefinition(nameGuidMap.get("Jane"));
+        String janeGuid = jane.getId()._getId();
+
+        // The lower bound constraint on Manager.subordinates should not be enforced on Jane since that entity is being deleted.
+        // Prior to the fix for ATLAS-991, this call would fail with a NullRequiredAttributeException.
+        EntityResult deleteResult = deleteEntities(johnGuid, maxGuid, janeGuid);
+        Assert.assertEquals(deleteResult.getDeletedEntities().size(), 3);
+        Assert.assertTrue(deleteResult.getDeletedEntities().containsAll(Arrays.asList(johnGuid, maxGuid, janeGuid)));
+        Assert.assertEquals(deleteResult.getUpdateEntities().size(), 1);
+
+        // Verify that Department entity was updated to disconnect its references to the deleted employees.
+        Assert.assertEquals(deleteResult.getUpdateEntities().get(0), hrDeptGuid);
+        hrDept = repositoryService.getEntityDefinition(hrDeptGuid);
+        Object object = hrDept.get("employees");
+        Assert.assertTrue(object instanceof List);
+        List<ITypedReferenceableInstance> employees = (List<ITypedReferenceableInstance>) object;
+        assertTestLowerBoundsIgnoredOnDeletedEntities(employees);
+    }
+
+    protected abstract void assertTestLowerBoundsIgnoredOnDeletedEntities(List<ITypedReferenceableInstance> employees);
+
+    @Test
+    public void testLowerBoundsIgnoredOnCompositeDeletedEntities() throws Exception {
+        String hrDeptGuid = createHrDeptGraph();
+        ITypedReferenceableInstance hrDept = repositoryService.getEntityDefinition(hrDeptGuid);
+        Map<String, String> nameGuidMap = getEmployeeNameGuidMap(hrDept);
+        ITypedReferenceableInstance john = repositoryService.getEntityDefinition(nameGuidMap.get("John"));
+        String johnGuid = john.getId()._getId();
+        ITypedReferenceableInstance max = repositoryService.getEntityDefinition(nameGuidMap.get("Max"));
+        String maxGuid = max.getId()._getId();
+
+        // The lower bound constraint on Manager.subordinates should not be enforced on the composite entity
+        // for Jane owned by the Department entity, since that entity is being deleted.
+        // Prior to the fix for ATLAS-991, this call would fail with a NullRequiredAttributeException.
+        EntityResult deleteResult = deleteEntities(johnGuid, maxGuid, hrDeptGuid);
+        Assert.assertEquals(deleteResult.getDeletedEntities().size(), 5);
+        Assert.assertTrue(deleteResult.getDeletedEntities().containsAll(nameGuidMap.values()));
+        Assert.assertTrue(deleteResult.getDeletedEntities().contains(hrDeptGuid));
+        assertTestLowerBoundsIgnoredOnCompositeDeletedEntities(hrDeptGuid);
+    }
+
+
+    protected abstract void assertTestLowerBoundsIgnoredOnCompositeDeletedEntities(String hrDeptGuid) throws Exception;
+
+    @Test
+    public void testLowerBoundsIgnoredWhenDeletingCompositeEntitesOwnedByMap() throws Exception {
+        // Define MapValueReferencer type with required reference to CompositeMapValue.
+        HierarchicalTypeDefinition<ClassType> mapValueReferencerTypeDef = TypesUtil.createClassTypeDef("MapValueReferencer",
+            ImmutableSet.<String>of(),
+            new AttributeDefinition("refToMapValue", "CompositeMapValue", Multiplicity.REQUIRED, false, null));
+
+        // Define MapValueReferencerContainer type with required composite map reference to MapValueReferencer.
+        HierarchicalTypeDefinition<ClassType> mapValueReferencerContainerTypeDef =
+            TypesUtil.createClassTypeDef("MapValueReferencerContainer",
+            ImmutableSet.<String>of(),
+            new AttributeDefinition("requiredMap", DataTypes.mapTypeName(DataTypes.STRING_TYPE.getName(), "MapValueReferencer"), Multiplicity.REQUIRED, true, null));
+
+        Map<String, IDataType> definedClassTypes = typeSystem.defineClassTypes(mapValueReferencerTypeDef, mapValueReferencerContainerTypeDef);
+        ClassType mapValueReferencerClassType = (ClassType) definedClassTypes.get("MapValueReferencer");
+        ClassType mapValueReferencerContainerType = (ClassType) definedClassTypes.get("MapValueReferencerContainer");
+
+        // Create instances of CompositeMapOwner and CompositeMapValue.
+        // Set MapOwner.map with one entry that references MapValue instance.
+        ITypedReferenceableInstance entityDefinition = createMapOwnerAndValueEntities();
+        String mapOwnerGuid = entityDefinition.getId()._getId();
+
+        // Verify MapOwner.map attribute has expected value.
+        ITypedReferenceableInstance mapOwnerInstance = repositoryService.getEntityDefinition(mapOwnerGuid);
+        Object object = mapOwnerInstance.get("map");
+        Assert.assertNotNull(object);
+        Assert.assertTrue(object instanceof Map);
+        Map<String, ITypedReferenceableInstance> map = (Map<String, ITypedReferenceableInstance>)object;
+        Assert.assertEquals(map.size(), 1);
+        ITypedReferenceableInstance mapValueInstance = map.get("value1");
+        Assert.assertNotNull(mapValueInstance);
+        String mapValueGuid = mapValueInstance.getId()._getId();
+
+        // Create instance of MapValueReferencerContainer
+        RequestContext.createContext();
+        ITypedReferenceableInstance mapValueReferencerContainer = mapValueReferencerContainerType.createInstance();
+        List<String> createdEntities = repositoryService.createEntities(mapValueReferencerContainer).getCreatedEntities();
+        Assert.assertEquals(createdEntities.size(), 1);
+        String mapValueReferencerContainerGuid = createdEntities.get(0);
+        mapValueReferencerContainer = repositoryService.getEntityDefinition(createdEntities.get(0));
+
+        // Create instance of MapValueReferencer, and update mapValueReferencerContainer
+        // to reference it.
+        ITypedReferenceableInstance mapValueReferencer = mapValueReferencerClassType.createInstance();
+        mapValueReferencerContainer.set("requiredMap", Collections.singletonMap("value1", mapValueReferencer));
+        mapValueReferencer.set("refToMapValue", mapValueInstance.getId());
+
+        RequestContext.createContext();
+        EntityResult updateEntitiesResult = repositoryService.updateEntities(mapValueReferencerContainer).getEntityResult();
+        Assert.assertEquals(updateEntitiesResult.getCreatedEntities().size(), 1);
+        Assert.assertEquals(updateEntitiesResult.getUpdateEntities().size(), 1);
+        Assert.assertEquals(updateEntitiesResult.getUpdateEntities().get(0), mapValueReferencerContainerGuid);
+        String mapValueReferencerGuid = updateEntitiesResult.getCreatedEntities().get(0);
+
+        // Delete map owner and map referencer container.  A total of 4 entities should be deleted,
+        // including the composite entities.  The lower bound constraint on MapValueReferencer.refToMapValue
+        // should not be enforced on the composite MapValueReferencer since it is being deleted.
+        EntityResult deleteEntitiesResult = repositoryService.deleteEntities(Arrays.asList(mapOwnerGuid, mapValueReferencerContainerGuid));
+        Assert.assertEquals(deleteEntitiesResult.getDeletedEntities().size(), 4);
+        Assert.assertTrue(deleteEntitiesResult.getDeletedEntities().containsAll(
+            Arrays.asList(mapOwnerGuid, mapValueGuid, mapValueReferencerContainerGuid, mapValueReferencerGuid)));
+    }
+
+    @Test
+    public void testDeleteMixOfExistentAndNonExistentEntities() throws Exception {
+        ITypedReferenceableInstance entity1 = compositeMapValueType.createInstance();
+        ITypedReferenceableInstance entity2 = compositeMapValueType.createInstance();
+        List<String> createEntitiesResult = repositoryService.createEntities(entity1, entity2).getCreatedEntities();
+        Assert.assertEquals(createEntitiesResult.size(), 2);
+        List<String> guids = Arrays.asList(createEntitiesResult.get(0), "non-existent-guid1", "non-existent-guid2", createEntitiesResult.get(1));
+        EntityResult deleteEntitiesResult = repositoryService.deleteEntities(guids);
+        Assert.assertEquals(deleteEntitiesResult.getDeletedEntities().size(), 2);
+        Assert.assertTrue(deleteEntitiesResult.getDeletedEntities().containsAll(createEntitiesResult));
+    }
+
+    @Test
+    public void testDeleteMixOfNullAndNonNullGuids() throws Exception {
+        ITypedReferenceableInstance entity1 = compositeMapValueType.createInstance();
+        ITypedReferenceableInstance entity2 = compositeMapValueType.createInstance();
+        List<String> createEntitiesResult = repositoryService.createEntities(entity1, entity2).getCreatedEntities();
+        Assert.assertEquals(createEntitiesResult.size(), 2);
+        List<String> guids = Arrays.asList(createEntitiesResult.get(0), null, null, createEntitiesResult.get(1));
+        EntityResult deleteEntitiesResult = repositoryService.deleteEntities(guids);
+        Assert.assertEquals(deleteEntitiesResult.getDeletedEntities().size(), 2);
+        Assert.assertTrue(deleteEntitiesResult.getDeletedEntities().containsAll(createEntitiesResult));
+    }
+
+    @Test
+    public void testDeleteCompositeEntityAndContainer() throws Exception {
+        Referenceable db = createDBEntity();
+        String dbId = createInstance(db);
+
+        Referenceable column = createColumnEntity();
+        String colId = createInstance(column);
+
+        Referenceable table1 = createTableEntity(dbId);
+        table1.set(COLUMNS_ATTR_NAME, Arrays.asList(new Id(colId, 0, COLUMN_TYPE)));
+        String table1Id = createInstance(table1);
+        Referenceable table2 = createTableEntity(dbId);
+        String table2Id = createInstance(table2);
+
+        // Delete the tables and column
+        EntityResult entityResult = deleteEntities(table1Id, colId, table2Id);
+        Assert.assertEquals(entityResult.getDeletedEntities().size(), 3);
+        Assert.assertTrue(entityResult.getDeletedEntities().containsAll(Arrays.asList(colId, table1Id, table2Id)));
+        assertEntityDeleted(table1Id);
+        assertEntityDeleted(colId);
+        assertEntityDeleted(table2Id);
+    }
+
+    @Test
+    public void testDeleteEntityWithDuplicateReferenceListElements() throws Exception {
+        // Create a table entity, with 2 composite column entities
+        Referenceable dbEntity = createDBEntity();
+        String dbGuid = createInstance(dbEntity);
+        Referenceable table1Entity = createTableEntity(dbGuid);
+        String tableName = TestUtils.randomString();
+        table1Entity.set(NAME, tableName);
+        Referenceable col1 = createColumnEntity();
+        col1.set(NAME, TestUtils.randomString());
+        Referenceable col2 = createColumnEntity();
+        col2.set(NAME, TestUtils.randomString());
+        // Populate columns reference list with duplicates.
+        table1Entity.set(COLUMNS_ATTR_NAME, ImmutableList.of(col1, col2, col1, col2));
+        ClassType dataType = typeSystem.getDataType(ClassType.class, table1Entity.getTypeName());
+        ITypedReferenceableInstance instance = dataType.convert(table1Entity, Multiplicity.REQUIRED);
+        TestUtils.resetRequestContext();
+        List<String> result = repositoryService.createEntities(instance).getCreatedEntities();
+        Assert.assertEquals(result.size(), 3);
+        ITypedReferenceableInstance entityDefinition = repositoryService.getEntityDefinition(TABLE_TYPE, NAME, tableName);
+        String tableGuid = entityDefinition.getId()._getId();
+        Object attrValue = entityDefinition.get(COLUMNS_ATTR_NAME);
+        assertTrue(attrValue instanceof List);
+        List<ITypedReferenceableInstance> columns = (List<ITypedReferenceableInstance>) attrValue;
+        Assert.assertEquals(columns.size(), 4);
+        TestUtils.resetRequestContext();
+        String columnGuid = columns.get(0).getId()._getId();
+
+        // Delete one of the columns.
+        EntityResult deleteResult = repositoryService.deleteEntities(Collections.singletonList(columnGuid));
+        Assert.assertEquals(deleteResult.getDeletedEntities().size(), 1);
+        Assert.assertTrue(deleteResult.getDeletedEntities().contains(columnGuid));
+        Assert.assertEquals(deleteResult.getUpdateEntities().size(), 1);
+        Assert.assertTrue(deleteResult.getUpdateEntities().contains(tableGuid));
+
+        // Verify the duplicate edge IDs were all removed from reference property list.
+        AtlasVertex tableVertex = GraphHelper.getInstance().getVertexForGUID(tableGuid);
+        String columnsPropertyName = GraphHelper.getQualifiedFieldName(dataType, COLUMNS_ATTR_NAME);
+        List columnsPropertyValue = tableVertex.getProperty(columnsPropertyName, List.class);
+        verifyTestDeleteEntityWithDuplicateReferenceListElements(columnsPropertyValue);
+    }
+
+    protected abstract void verifyTestDeleteEntityWithDuplicateReferenceListElements(List columnsPropertyValue);
+
     private String createHrDeptGraph() throws Exception {
         ITypedReferenceableInstance hrDept = TestUtils.createDeptEg1(typeSystem);
 
-        List<String> guids = repositoryService.createEntities(hrDept);
+        List<String> guids = repositoryService.createEntities(hrDept).getCreatedEntities();
         Assert.assertNotNull(guids);
         Assert.assertEquals(guids.size(), 5);
+
+        return getDepartmentGuid(guids);
+    }
+
+    private String getDepartmentGuid(List<String> guids)
+        throws RepositoryException, EntityNotFoundException {
 
         String hrDeptGuid = null;
         for (String guid : guids) {
@@ -931,10 +1151,11 @@ public abstract class GraphBackedMetadataRepositoryDeleteTestBase {
         repositoryService.createEntities(db, table);
     }
 
-    protected List<Vertex> getVertices(String propertyName, Object value) {
-        Iterable<Vertex> vertices = graphProvider.get().getVertices(propertyName, value);
-        List<Vertex> list = new ArrayList<>();
-        for (Vertex vertex : vertices) {
+    protected List<AtlasVertex> getVertices(String propertyName, Object value) {
+        AtlasGraph graph = TestUtils.getGraph();
+        Iterable<AtlasVertex> vertices = graph.getVertices(propertyName, value);
+        List<AtlasVertex> list = new ArrayList<>();
+        for (AtlasVertex vertex : vertices) {
             list.add(vertex);
         }
         return list;

@@ -31,6 +31,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+@Deprecated
 public final class EntityProcessor implements ObjectGraphWalker.NodeProcessor {
 
     private final Map<Id, IReferenceableInstance> idToInstanceMap;
@@ -40,7 +41,7 @@ public final class EntityProcessor implements ObjectGraphWalker.NodeProcessor {
     }
 
     public Collection<IReferenceableInstance> getInstances() {
-        ArrayList<IReferenceableInstance> instances = new ArrayList<IReferenceableInstance>(idToInstanceMap.values());
+        ArrayList<IReferenceableInstance> instances = new ArrayList<>(idToInstanceMap.values());
         Collections.reverse(instances);
         return instances;
     }

@@ -16,10 +16,7 @@
  * limitations under the License.
  */
 
-define(function(require) {
-
-    var Backbone = require('backbone');
-    var template = require('hbs!tmpl/common/modal');
+define(['require', 'backbone', 'hbs!tmpl/common/modal'], function(require, Backbone, template) {
 
     var Modal = Backbone.View.extend({
 
@@ -32,7 +29,7 @@ define(function(require) {
                 this.trigger('closeModal');
 
                 if (this.options.content && this.options.content.trigger) {
-                    this.options.content.trigger('closeModal', this);
+                    this.options.content.trigger('closeModal', this, event);
                 }
             },
             'click .cancel': function(event) {
@@ -41,7 +38,7 @@ define(function(require) {
                 this.trigger('closeModal');
 
                 if (this.options.content && this.options.content.trigger) {
-                    this.options.content.trigger('closeModal', this);
+                    this.options.content.trigger('closeModal', this, event);
                 }
             },
             'click .ok': function(event) {
@@ -50,7 +47,7 @@ define(function(require) {
                 this.trigger('ok');
 
                 if (this.options.content && this.options.content.trigger) {
-                    this.options.content.trigger('ok', this);
+                    this.options.content.trigger('ok', this, event);
                 }
 
                 if (this.options.okCloses) {
@@ -82,11 +79,14 @@ define(function(require) {
                 okCloses: true,
                 cancelText: 'Cancel',
                 allowCancel: false,
+                allowBackdrop: true,
                 showFooter: true,
                 escape: true,
                 animate: true,
                 contentWithFooter: false,
-                template: template
+                template: template,
+                width: null,
+                buttons: null
             }, options);
         },
 
@@ -145,7 +145,7 @@ define(function(require) {
             //Create it
             $el.modal(_.extend({
                 keyboard: this.options.allowCancel,
-                backdrop: this.options.allowCancel ? true : 'static'
+                backdrop: this.options.allowBackdrop ? 'static' : true
             }, this.options.modalOptions));
 
             //Focus OK button

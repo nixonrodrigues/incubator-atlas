@@ -23,8 +23,9 @@ define(['require',
     'modules/Modal',
     'collection/VCatalogList',
     'utils/CommonViewFunction',
-    'utils/Messages'
-], function(require, Backbone, AddTermToEntityLayoutViewTmpl, Utils, Modal, VCatalogList, CommonViewFunction, Messages) {
+    'utils/Messages',
+    'utils/Enums'
+], function(require, Backbone, AddTermToEntityLayoutViewTmpl, Utils, Modal, VCatalogList, CommonViewFunction, Messages, Enums) {
     'use strict';
 
     var AddTermToEntityLayoutView = Backbone.Marionette.LayoutView.extend(
@@ -50,7 +51,7 @@ define(['require',
              * @constructs
              */
             initialize: function(options) {
-                _.extend(this, _.pick(options, 'guid', 'modalCollection', 'callback', 'multiple', 'showLoader'));
+                _.extend(this, _.pick(options, 'guid', 'modalCollection', 'callback', 'multiple', 'showLoader', 'hideLoader'));
                 this.vCatalogList = new VCatalogList();
                 var that = this;
                 this.modal = new Modal({
@@ -61,32 +62,45 @@ define(['require',
                     allowCancel: true,
                 }).open();
                 this.on('ok', function() {
+                    that.asyncFetchCounter = 0;
+                    var termName = this.modal.$el.find('.taxonomyTree li.active a').data('name').split("`").join("");
+                    if (termName.trim) {
+                        termName = termName.trim();
+                    }
                     if (that.multiple) {
                         for (var i = 0; i < that.multiple.length; i++) {
                             if (i == 0) {
-                                that.showLoader();
-                            }
-                            var obj = {
-                                termName: this.modal.$el.find('.taxonomyTree li.active a').data('name').split("`").join(""),
-                                guid: that.multiple[i].id.id
-                            }
-                            if (that.multiple.length - 1 == i) {
-                                obj['callback'] = function() {
-                                    that.callback();
+                                if (that.showLoader) {
+                                    that.showLoader();
                                 }
                             }
-                            // if (that.multiple[i].model.get("$traits$") && !that.multiple[i].model.get("$traits$")[obj.termName]) {
-                            CommonViewFunction.saveTermToAsset(obj);
-                            // / }
+                            var obj = {
+                                termName: termName,
+                                guid: that.multiple[i].id,
+                                deletedEntity: Enums.entityStateReadOnly[that.multiple[i].model.status],
+                                entityName: Utils.getName(that.multiple[i].model)
+                            };
+                            if (obj.deletedEntity) {
+                                Utils.notifyError({
+                                    content: obj.entityName + Messages.assignDeletedEntity
+                                });
+                                if (that.multiple.length === 1 || (that.multiple.length == (i + 1) && that.asyncFetchCounter == 0)) {
+                                    that.hideLoader();
+                                }
+                            } else {
+                                CommonViewFunction.saveTermToAsset(obj, that);
+                            }
+
                         }
                     } else {
+                        that.asyncFetchCounter = 0;
+                        if (that.showLoader) {
+                            that.showLoader();
+                        }
                         CommonViewFunction.saveTermToAsset({
-                            termName: this.modal.$el.find('.taxonomyTree li.active a').data('name').split("`").join(""),
-                            guid: this.guid,
-                            callback: function() {
-                                that.callback();
-                            }
-                        });
+                            termName: termName,
+                            guid: this.guid
+                        }, that);
                     }
                 });
                 this.on('closeModal', function() {

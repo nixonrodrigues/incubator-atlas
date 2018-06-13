@@ -28,11 +28,15 @@ import org.apache.atlas.typesystem.types.AttributeInfo;
 import org.apache.atlas.typesystem.types.ClassType;
 import org.apache.atlas.typesystem.types.EnumTypeDefinition;
 import org.apache.atlas.typesystem.types.EnumValue;
+import org.apache.atlas.typesystem.types.FieldMapping;
+import org.apache.atlas.typesystem.types.HierarchicalType;
 import org.apache.atlas.typesystem.types.HierarchicalTypeDefinition;
 import org.apache.atlas.typesystem.types.IDataType;
 import org.apache.atlas.typesystem.types.Multiplicity;
+import org.apache.atlas.typesystem.types.StructType;
 import org.apache.atlas.typesystem.types.StructTypeDefinition;
 import org.apache.atlas.typesystem.types.TraitType;
+import org.apache.atlas.AtlasConstants;
 
 import org.apache.atlas.typesystem.types.TypeSystem;
 import scala.collection.JavaConversions;
@@ -76,7 +80,12 @@ public class TypesUtil {
 
     public static HierarchicalTypeDefinition<TraitType> createTraitTypeDef(String name, String description,
         ImmutableSet<String> superTypes, AttributeDefinition... attrDefs) {
-        return new HierarchicalTypeDefinition<>(TraitType.class, name, description, superTypes, attrDefs);
+        return createTraitTypeDef(name, description, AtlasConstants.DEFAULT_TYPE_VERSION, superTypes, attrDefs);
+    }
+
+    public static HierarchicalTypeDefinition<TraitType> createTraitTypeDef(String name, String description, String version,
+        ImmutableSet<String> superTypes, AttributeDefinition... attrDefs) {
+        return new HierarchicalTypeDefinition<>(TraitType.class, name, description, version, superTypes, attrDefs);
     }
 
     public static StructTypeDefinition createStructTypeDef(String name, AttributeDefinition... attrDefs) {
@@ -87,12 +96,21 @@ public class TypesUtil {
         return new StructTypeDefinition(name, description, attrDefs);
     }
 
+    public static StructTypeDefinition createStructTypeDef(String name, String description, String version, AttributeDefinition... attrDefs) {
+        return new StructTypeDefinition(name, description, version, attrDefs);
+    }
+
     public static HierarchicalTypeDefinition<ClassType> createClassTypeDef(String name,
             ImmutableSet<String> superTypes, AttributeDefinition... attrDefs) {
         return createClassTypeDef(name, null, superTypes, attrDefs);
     }
 
     public static HierarchicalTypeDefinition<ClassType> createClassTypeDef(String name, String description,
+        ImmutableSet<String> superTypes, AttributeDefinition... attrDefs) {
+        return createClassTypeDef(name, description, AtlasConstants.DEFAULT_TYPE_VERSION, superTypes, attrDefs);
+    }
+
+    public static HierarchicalTypeDefinition<ClassType> createClassTypeDef(String name, String description, String version,
         ImmutableSet<String> superTypes, AttributeDefinition... attrDefs) {
         return new HierarchicalTypeDefinition<>(ClassType.class, name, description, superTypes, attrDefs);
     }
@@ -112,6 +130,29 @@ public class TypesUtil {
                     false, null), null);
         } catch (AtlasException e) {
             throw new RuntimeException(e);
+        }
+    }
+
+
+    /**
+     * Get the field mappings for the specified data type.
+     * Field mappings are only relevant for CLASS, TRAIT, and STRUCT types.
+     *
+     * @param type
+     * @return {@link FieldMapping} for the specified type
+     * @throws IllegalArgumentException if type is not a CLASS, TRAIT, or STRUCT type.
+     */
+    public static FieldMapping getFieldMapping(IDataType type) {
+        switch (type.getTypeCategory()) {
+        case CLASS:
+        case TRAIT:
+            return ((HierarchicalType)type).fieldMapping();
+
+        case STRUCT:
+            return ((StructType)type).fieldMapping();
+
+        default:
+            throw new IllegalArgumentException("Type " + type + " doesn't have any fields!");
         }
     }
 }

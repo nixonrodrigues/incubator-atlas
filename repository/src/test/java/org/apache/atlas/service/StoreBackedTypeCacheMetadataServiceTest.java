@@ -17,11 +17,13 @@
  */
 package org.apache.atlas.service;
 
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
+import org.apache.atlas.TestModules;
 import org.apache.atlas.TestUtils;
-import org.apache.atlas.repository.graph.GraphProvider;
+import org.apache.atlas.repository.graph.AtlasGraphProvider;
 import org.apache.atlas.repository.typestore.ITypeStore;
 import org.apache.atlas.repository.typestore.StoreBackedTypeCache;
-import org.apache.atlas.repository.typestore.StoreBackedTypeCacheTestModule;
 import org.apache.atlas.services.MetadataService;
 import org.apache.atlas.typesystem.TypesDef;
 import org.apache.atlas.typesystem.json.TypesSerialization;
@@ -41,11 +43,7 @@ import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Guice;
 import org.testng.annotations.Test;
 
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableSet;
-import com.google.inject.Inject;
-import com.thinkaurelius.titan.core.TitanGraph;
-import com.thinkaurelius.titan.core.util.TitanCleanup;
+import javax.inject.Inject;
 
 
 /**
@@ -53,7 +51,7 @@ import com.thinkaurelius.titan.core.util.TitanCleanup;
  *  StoreBackedTypeCacheTestModule Guice module sets Atlas configuration
  *  to use {@link StoreBackedTypeCache} as the TypeCache implementation class.
  */
-@Guice(modules = StoreBackedTypeCacheTestModule.class)
+@Guice(modules = TestModules.StoreBackedTypeCacheTestModule.class)
 public class StoreBackedTypeCacheMetadataServiceTest
 {
     @Inject
@@ -66,9 +64,6 @@ public class StoreBackedTypeCacheMetadataServiceTest
     TypeCache typeCache;
 
     private StoreBackedTypeCache storeBackedTypeCache;
-
-    @Inject
-    private GraphProvider<TitanGraph> graphProvider;
 
     private TypeSystem ts;
 
@@ -94,22 +89,10 @@ public class StoreBackedTypeCacheMetadataServiceTest
 
     @AfterClass
     public void tearDown() throws Exception {
-        ts.reset();
-        try {
-            graphProvider.get().shutdown();
-        }
-        catch(Exception e) {
-            e.printStackTrace();
-        }
-
-        try {
-            TitanCleanup.clear(graphProvider.get());
-        }
-        catch(Exception e) {
-            e.printStackTrace();
-        }
+        TypeSystem.getInstance().reset();
+        AtlasGraphProvider.cleanup();
     }
-
+    
     @Test
     public void testGetTypeDefinition() throws Exception {
         // Cache should be empty

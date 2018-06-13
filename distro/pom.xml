@@ -22,7 +22,7 @@
     <parent>
         <artifactId>apache-atlas</artifactId>
         <groupId>org.apache.atlas</groupId>
-        <version>0.8-incubating-SNAPSHOT</version>
+        <version>0.9-incubating-SNAPSHOT</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
     <artifactId>atlas-distro</artifactId>
@@ -45,6 +45,8 @@ atlas.graph.storage.lock.wait-time=10000
 #Solr cloud mode properties
 atlas.graph.index.search.solr.mode=cloud
 atlas.graph.index.search.solr.zookeeper-url=
+atlas.graph.index.search.solr.zookeeper-connect-timeout=60000
+atlas.graph.index.search.solr.zookeeper-session-timeout=60000
 
 #Solr http mode properties
 #atlas.graph.index.search.solr.mode=http
@@ -124,6 +126,9 @@ atlas.graph.index.search.solr.zookeeper-url=
                 <titan.storage.backend>berkeleyje</titan.storage.backend>
                 <titan.storage.properties>#Berkeley
 atlas.graph.storage.directory=${sys:atlas.home}/data/berkley
+atlas.graph.storage.lock.clean-expired=true
+atlas.graph.storage.lock.expiry-time=500
+atlas.graph.storage.lock.wait-time=300
                 </titan.storage.properties>
                 <titan.index.backend>elasticsearch</titan.index.backend>
                 <titan.index.properties>#ElasticSearch
@@ -162,6 +167,8 @@ atlas.graph.storage.lock.wait-time=10000
 #Solr cloud mode properties
 atlas.graph.index.search.solr.mode=cloud
 atlas.graph.index.search.solr.zookeeper-url=localhost:2181
+atlas.graph.index.search.solr.zookeeper-connect-timeout=60000
+atlas.graph.index.search.solr.zookeeper-session-timeout=60000
 
 #Solr http mode properties
 #atlas.graph.index.search.solr.mode=http

@@ -44,6 +44,7 @@ import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicInteger;
 
+@Deprecated
 public class MemRepository implements IRepository {
 
     final TypeSystem typeSystem;
@@ -117,10 +118,10 @@ public class MemRepository implements IRepository {
          * - create a ITypedReferenceableInstance.
          *   replace any old References ( ids or object references) with new Ids.
         */
-        List<ITypedReferenceableInstance> newInstances = new ArrayList<ITypedReferenceableInstance>();
+        List<ITypedReferenceableInstance> newInstances = new ArrayList<>();
         ITypedReferenceableInstance retInstance = null;
-        Set<ClassType> classTypes = new TreeSet<ClassType>();
-        Set<TraitType> traitTypes = new TreeSet<TraitType>();
+        Set<ClassType> classTypes = new TreeSet<>();
+        Set<TraitType> traitTypes = new TreeSet<>();
         for (IReferenceableInstance transientInstance : discoverInstances.idToInstanceMap.values()) {
             try {
                 ClassType cT = typeSystem.getDataType(ClassType.class, transientInstance.getTypeName());
@@ -274,8 +275,8 @@ public class MemRepository implements IRepository {
     }
 
     public void defineTypes(List<HierarchicalType> types) throws RepositoryException {
-        List<TraitType> tTypes = new ArrayList<TraitType>();
-        List<ClassType> cTypes = new ArrayList<ClassType>();
+        List<TraitType> tTypes = new ArrayList<>();
+        List<ClassType> cTypes = new ArrayList<>();
 
         for (HierarchicalType h : types) {
             if (h.getTypeCategory() == DataTypes.TypeCategory.TRAIT) {

@@ -18,12 +18,13 @@
 
 package org.apache.atlas.catalog.query;
 
-import com.thinkaurelius.titan.core.TitanGraph;
-import com.tinkerpop.blueprints.Compare;
-import com.tinkerpop.blueprints.Vertex;
-import com.tinkerpop.gremlin.java.GremlinPipeline;
-import com.tinkerpop.pipes.Pipe;
-import com.tinkerpop.pipes.filter.PropertyFilterPipe;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.NoSuchElementException;
+
 import org.apache.atlas.catalog.Request;
 import org.apache.atlas.catalog.VertexWrapper;
 import org.apache.atlas.catalog.definition.ResourceDefinition;
@@ -31,13 +32,17 @@ import org.apache.atlas.catalog.exception.ResourceNotFoundException;
 import org.apache.atlas.catalog.projection.Projection;
 import org.apache.atlas.catalog.projection.ProjectionResult;
 import org.apache.atlas.repository.Constants;
-import org.apache.atlas.repository.graph.TitanGraphProvider;
+import org.apache.atlas.repository.graph.AtlasGraphProvider;
+import org.apache.atlas.repository.graphdb.AtlasElement;
+import org.apache.atlas.repository.graphdb.AtlasGraph;
+import org.apache.atlas.repository.graphdb.AtlasVertex;
 import org.apache.atlas.typesystem.persistence.Id;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
-import java.util.Map;
+import com.tinkerpop.blueprints.Compare;
+import com.tinkerpop.blueprints.Vertex;
+import com.tinkerpop.gremlin.java.GremlinPipeline;
+import com.tinkerpop.pipes.Pipe;
+import com.tinkerpop.pipes.filter.PropertyFilterPipe;
 
 /**
  * Base Query implementation.
@@ -112,7 +117,42 @@ public abstract class BaseQuery implements AtlasQuery {
     protected abstract Pipe getQueryPipe();
 
     protected GremlinPipeline getRootVertexPipeline() {
-        return new GremlinPipeline(getGraph().getVertices());
+        return new GremlinPipeline(unWrapVertices());
+    }
+
+    protected Iterable<Object> unWrapVertices() {
+        final Iterable<AtlasVertex> vertices = getGraph().getVertices();
+
+        Iterable<Object> vertexIterable = new Iterable<Object>() {
+            Iterator<Object> iterator = new Iterator<Object>() {
+                Iterator<AtlasVertex> wrapperIterator = vertices.iterator();
+
+                @Override
+                public boolean hasNext() {
+                    return wrapperIterator.hasNext();
+                }
+
+                @Override
+                public Object next() {
+                    if (hasNext()) {
+                        return ((AtlasElement) wrapperIterator.next().getV()).getWrappedElement();
+                    } else {
+                        throw new NoSuchElementException();
+                    }
+                }
+
+                @Override
+                public void remove() {
+                    throw new UnsupportedOperationException("Remove not supported");
+                }
+            };
+
+            @Override
+            public Iterator<Object> iterator() {
+                return iterator;
+            }
+        };
+        return vertexIterable;
     }
 
     protected Pipe getNotDeletedPipe() {
@@ -164,10 +204,9 @@ public abstract class BaseQuery implements AtlasQuery {
         return request;
     }
 
-    //todo: abstract
     // Underlying method is synchronized and caches the graph in a static field
-    protected TitanGraph getGraph() {
-        return TitanGraphProvider.getGraphInstance();
+    protected AtlasGraph getGraph() {
+        return AtlasGraphProvider.getGraphInstance();
     }
 
     protected VertexWrapper wrapVertex(Vertex v) {

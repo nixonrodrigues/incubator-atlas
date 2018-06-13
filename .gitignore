@@ -15,10 +15,10 @@
 # limitations under the License.
 
 # Maven
-target
+target*
 dependency-reduced-pom.xml
 core*.dmp
-
+pom.xml.releaseBackup
 
 # IntelliJ
 *.iml
@@ -30,10 +30,15 @@ core*.dmp
 .cache
 .classpath
 .project
+.checkstyle
 
 .settings
 .externalToolBuilders
 maven-eclipse.xml
+
+#binary files
+**/bin/**
+!distro/src/bin/**
 
 #log files
 logs

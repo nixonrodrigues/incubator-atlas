@@ -45,6 +45,9 @@
 .modal-body {
     position: relative;
     padding: 15px;
+    max-height: 400px;
+    min-height: 70px;
+    overflow: auto;
 }
 
 .cancel {
@@ -70,10 +73,10 @@
 
 .table-quickMenu>thead>tr>th {
     border-width: thin;
-    border-color: $action_gray;
+    border-color: $color_jungle_green_approx;
     border-bottom-style: solid;
     box-shadow: none;
-    padding: 20px 30px;
+    padding: 20px 15px;
     background-color: transparent;
     text-align: left;
     font-weight: 800;
@@ -86,7 +89,7 @@
     border-color: $color_gallery_approx;
     color: #333333;
     font-weight: 100;
-    padding: 15px 30px;
+    padding: 10px 15px;
 }
 
 .backgrid-paginator ul > li > a:hover,
@@ -117,6 +120,9 @@
     .select2-selection--multiple {
         background-color: $color_white_lilac_approx !important;
         border: 1px $color_mystic_approx solid !important;
+        &.errorClass {
+            border: 1px solid red !important;
+        }
     }
     .select2-selection--single {
         .select2-selection__arrow {
@@ -132,10 +138,50 @@
     }
 }
 
-.select2-container .select2-selection--single {
-    height: 34px;
-    .select2-selection__rendered {
-        padding-left: 12px;
+.select2-container {
+    .select2-selection--single,
+    .select2-selection--multiple {
+        min-height: 34px;
+        .select2-selection__rendered {
+            padding-left: 12px;
+        }
+    }
+}
+
+.select2-container--default .select2-selection--multiple .select2-selection__choice {
+    background-color: $white;
+    color: $color_mountain_mist_approx;
+    border: 1px solid $tag_color;
+}
+
+.select2-container--default .select2-search--inline .select2-search__field {
+    color: #555;
+    width: 300px !important;
+}
+
+.typeLOV {
+    .select2-container--default {
+        .select2-selection--multiple {
+            .select2-selection__rendered {
+                padding-right: 13px;
+                .select2-selection__choice {
+                    font-size: 14px;
+                    color: $color_mountain_mist_approx;
+                    border: 1px solid $color_mountain_mist_approx;
+                }
+                .select2-search__field {
+                    font-size: 14px;
+                }
+            }
+            .select2-selection__clear {
+                position: absolute;
+                float: none;
+                margin: 0px;
+                right: 4px;
+                top: 5px;
+                color: $color_mountain_mist_approx;
+            }
+        }
     }
 }
 
@@ -178,7 +224,83 @@
 }
 
 .backgrid-paginator ul > .disabled > span,
-.backgrid-paginator ul > .disabled > a,
-.backgrid-paginator ul > .disabled > a:hover {
+.backgrid-paginator ul > .disabled > a {
+    &:hover {
+        cursor: not-allowed;
+        background-color: #7ed3be !important;
+    }
+}
+
+.popover {
+    z-index: 99;
+}
+
+.popover-content {
+    ul {
+        color: $dark_gray;
+        padding: 0px 5px;
+        margin-bottom: 0px;
+        cursor: pointer;
+        a {
+            color: $dark_gray;
+            padding: 5px;
+        }
+    }
+}
+
+.tab-content > .tab-pane.active {
+    overflow-x: hidden;
+}
+
+.ui-pnotify-text {
+    word-break: break-all;
+}
+
+.checkbox-inline,
+.radio-inline {
+    padding-left: 0px;
+    font-weight: bold;
+}
+
+.advancedInfo {
+    margin-left: 5px;
     cursor: pointer;
+}
+
+.query-builder .rule-container .rule-value-container {
+    display: inline-block !important;
+}
+
+.rules-group-header .btn-group.pull-right.group-actions {
+    float: left !important;
+}
+
+.query-builder .rules-list>:first-child::before {
+    top: -8px;
+}
+
+.query-builder .rules-group-header .btn-group.group-conditions label {
+    display: none;
+}
+
+.query-builder .rule-value-container input {
+    padding: 6px 12px !important;
+}
+
+div.columnmanager-visibilitycontrol {
+    width: auto;
+    margin-bottom: 5px;
+}
+
+.columnmanager-dropdown-container > li > span.column-label {
+    width: auto;
+}
+
+div.columnmanager-dropdown-container.open {
+    overflow: auto;
+}
+
+.columnmanager-visibilitycontrol.open .btn-atlasAction {
+    background-color: #37bb9b;
+    color: #fff;
 }

@@ -20,12 +20,13 @@ define(['require',
     'backbone',
     'hbs!tmpl/detail_page/DetailPageLayoutView_tmpl',
     'utils/Utils',
-    'collection/VTagList',
-    'models/VEntity',
     'utils/CommonViewFunction',
     'utils/Globals',
-    'utils/Messages'
-], function(require, Backbone, DetailPageLayoutViewTmpl, Utils, VTagList, VEntity, CommonViewFunction, Globals, Messages) {
+    'utils/Enums',
+    'utils/Messages',
+    'utils/UrlLinks',
+    'jquery-ui'
+], function(require, Backbone, DetailPageLayoutViewTmpl, Utils, CommonViewFunction, Globals, Enums, Messages, UrlLinks) {
     'use strict';
 
     var DetailPageLayoutView = Backbone.Marionette.LayoutView.extend(
@@ -50,38 +51,26 @@ define(['require',
                 tagClick: '[data-id="tagClick"]',
                 title: '[data-id="title"]',
                 editButton: '[data-id="editButton"]',
-                cancelButton: '[data-id="cancelButton"]',
-                publishButton: '[data-id="publishButton"]',
                 description: '[data-id="description"]',
-                descriptionTextArea: '[data-id="descriptionTextArea"]',
                 editBox: '[data-id="editBox"]',
-                createDate: '[data-id="createDate"]',
-                updateDate: '[data-id="updateDate"]',
-                createdUser: '[data-id="createdUser"]',
                 deleteTag: '[data-id="deleteTag"]',
                 backButton: "[data-id='backButton']",
                 addTag: '[data-id="addTag"]',
                 addTerm: '[data-id="addTerm"]',
                 tagList: '[data-id="tagList"]',
-                termList: '[data-id="termList"]'
+                termList: '[data-id="termList"]',
+                fullscreenPanel: "#fullscreen_panel"
             },
             templateHelpers: function() {
                 return {
-                    taxonomy: Globals.taxonomy
+                    taxonomy: Globals.taxonomy,
+                    entityUpdate: Globals.entityUpdate
                 };
             },
             /** ui events hash */
             events: function() {
                 var events = {};
-                events["click " + this.ui.editButton] = function() {
-                    this.ui.editButton.hide();
-                    this.ui.description.hide();
-                    this.ui.editBox.show();
-                    this.ui.descriptionTextArea.focus();
-                    if (this.descriptionPresent) {
-                        this.ui.descriptionTextArea.val(this.ui.description.text());
-                    }
-                };
+                events["click " + this.ui.editButton] = 'onClickEditEntity';
                 events["click " + this.ui.tagClick] = function(e) {
                     if (e.target.nodeName.toLocaleLowerCase() != "i") {
                         var scope = $(e.currentTarget);
@@ -89,7 +78,7 @@ define(['require',
                             var url = scope.data('href').split(".").join("/terms/");
                             Globals.saveApplicationState.tabState.stateChanged = false;
                             Utils.setUrl({
-                                url: '#!/taxonomy/detailCatalog/api/atlas/v1/taxonomies/' + url,
+                                url: '#!/taxonomy/detailCatalog' + UrlLinks.taxonomiesApiUrl() + '/' + url,
                                 mergeBrowserUrl: false,
                                 trigger: true
                             });
@@ -102,8 +91,6 @@ define(['require',
                         }
                     }
                 };
-                // events["click " + this.ui.publishButton] = 'onPublishButtonClick';
-                events["click " + this.ui.cancelButton] = 'onCancelButtonClick';
                 events["click " + this.ui.deleteTag] = 'onClickTagCross';
                 events["click " + this.ui.addTag] = 'onClickAddTagBtn';
                 events["click " + this.ui.addTerm] = 'onClickAddTermBtn';
@@ -117,43 +104,40 @@ define(['require',
              * @constructs
              */
             initialize: function(options) {
-                _.extend(this, _.pick(options, 'globalVent', 'collection', 'vent', 'id'));
+                _.extend(this, _.pick(options, 'collection', 'id', 'entityDefCollection', 'typeHeaders', 'enumDefCollection', 'classificationDefCollection'));
                 this.bindEvents();
             },
             bindEvents: function() {
                 var that = this;
                 this.listenTo(this.collection, 'reset', function() {
-
-                    var collectionJSON = this.collection.toJSON();
-                    if (collectionJSON[0].id && collectionJSON[0].id.id) {
-                        var tagGuid = collectionJSON[0].id.id;
-                        this.readOnly = Globals.entityStateReadOnly[collectionJSON[0].id.state];
+                    this.entityObject = this.collection.first().toJSON();
+                    var collectionJSON = this.entityObject.entity;
+                    if (collectionJSON && collectionJSON.guid) {
+                        var tagGuid = collectionJSON.guid;
+                        this.readOnly = Enums.entityStateReadOnly[collectionJSON.status];
+                    } else {
+                        var tagGuid = this.id;
                     }
                     if (this.readOnly) {
                         this.$el.addClass('readOnly');
                     } else {
                         this.$el.removeClass('readOnly');
                     }
-                    if (collectionJSON && collectionJSON.length) {
-                        if (collectionJSON[0].values) {
-                            if (collectionJSON[0].values.name) {
-                                this.name = collectionJSON[0].values.name;
+                    if (collectionJSON) {
+                        this.name = Utils.getName(collectionJSON);
+                        if (collectionJSON.attributes) {
+                            if (this.name && collectionJSON.typeName) {
+                                this.name = this.name + ' (' + _.escape(collectionJSON.typeName) + ')';
                             }
-                            if (!this.name && collectionJSON[0].values.qualifiedName) {
-                                this.name = collectionJSON[0].values.qualifiedName;
+                            if (!this.name && collectionJSON.typeName) {
+                                this.name = _.escape(collectionJSON.typeName);
                             }
-                            if (!this.name && collectionJSON[0].typeName) {
-                                this.name = collectionJSON[0].typeName;
-                            }
-                            if (!this.name && this.id) {
-                                this.name = this.id;
-                            }
-                            this.description = collectionJSON[0].values.description;
+                            this.description = collectionJSON.attributes.description;
                             if (this.name) {
                                 this.ui.title.show();
                                 var titleName = '<span>' + this.name + '</span>';
                                 if (this.readOnly) {
-                                    titleName += '<button title="Deleted" class="btn btn-atlasAction btn-atlas deleteBtn"><i class="fa fa-trash"></i> Deleted</button>'
+                                    titleName += '<button title="Deleted" class="btn btn-atlasAction btn-atlas deleteBtn"><i class="fa fa-trash"></i> Deleted</button>';
                                 }
                                 this.ui.title.html(titleName);
                             } else {
@@ -161,35 +145,112 @@ define(['require',
                             }
                             if (this.description) {
                                 this.ui.description.show();
-                                this.ui.description.html('<span>' + this.description + '</span>');
+                                this.ui.description.html('<span>' + _.escape(this.description) + '</span>');
                             } else {
                                 this.ui.description.hide();
                             }
                         }
-                        if (collectionJSON[0].traits) {
-                            this.addTagToTerms(collectionJSON[0].traits);
+                        if (collectionJSON.classifications) {
+                            this.addTagToTerms(collectionJSON.classifications);
+                        } else {
+                            this.addTagToTerms([]);
+                        }
+                        if (Globals.entityTypeConfList && _.isEmptyArray(Globals.entityTypeConfList)) {
+                            this.ui.editButton.show();
+                        } else {
+                            if (_.contains(Globals.entityTypeConfList, collectionJSON.typeName)) {
+                                this.ui.editButton.show();
+                            }
                         }
                     }
-
-                    this.renderEntityDetailTableLayoutView();
-                    this.renderTagTableLayoutView(tagGuid);
-                    this.renderLineageLayoutView(tagGuid);
-                    this.renderSchemaLayoutView(tagGuid);
-                    this.renderAuditTableLayoutView(tagGuid);
-                    this.renderTermTableLayoutView(tagGuid);
+                    this.hideLoader();
+                    var obj = {
+                        entity: collectionJSON,
+                        referredEntities: this.entityObject.referredEntities,
+                        guid: this.id,
+                        entityName: this.name,
+                        typeHeaders: this.typeHeaders,
+                        entityDefCollection: this.entityDefCollection,
+                        fetchCollection: this.fetchCollection.bind(that),
+                        enumDefCollection: this.enumDefCollection,
+                        classificationDefCollection: this.classificationDefCollection
+                    }
+                    this.getEntityDef(obj);
+                    this.renderTagTableLayoutView(obj);
+                    this.renderTermTableLayoutView(_.extend({}, obj, { term: true }));
+                    // To render Schema check attribute "schemaElementsAttribute"
+                    var schemaOptions = this.entityDefCollection.fullCollection.find({ name: collectionJSON.typeName }).get('options');
+                    if (schemaOptions && schemaOptions.hasOwnProperty('schemaElementsAttribute') && schemaOptions.schemaElementsAttribute !== "") {
+                        this.$('.schemaTable').show();
+                        this.renderSchemaLayoutView(_.extend({}, obj, {
+                            attribute: collectionJSON.attributes[schemaOptions.schemaElementsAttribute]
+                        }));
+                    }
+                }, this);
+                this.listenTo(this.collection, 'error', function(model, response) {
+                    this.$('.fontLoader').hide();
+                    if (response.responseJSON) {
+                        Utils.notifyError({
+                            content: response.responseJSON.errorMessage || response.responseJSON.error
+                        });
+                    }
                 }, this);
             },
             onRender: function() {
                 var that = this;
-                this.ui.editBox.hide();
+                Utils.showTitleLoader(this.$('.page-title .fontLoader'), this.$('.entityDetail'));
+                this.$('.fontLoader').show(); // to show tab loader
+                this.renderLineageLayoutView({
+                    guid: this.id,
+                    entityDefCollection: this.entityDefCollection,
+                    actionCallBack: function() {
+                        that.$('#expand_collapse_panel').click();
+                    }
+                });
+                this.$(".resize-graph").resizable({
+                    handles: ' s',
+                    minHeight: 375,
+                    stop: function(event, ui) {
+                        that.$('.resize-graph').height(($(this).height()));
+                    },
+                });
+                this.ui.fullscreenPanel.on('fullscreen_done', function(e, panel) {
+                    var svgEl = panel.find('.panel-body svg'),
+                        scaleEl = svgEl.find('>g'),
+                        zoom = that.RLineageLayoutView.currentView.zoom,
+                        svg = that.RLineageLayoutView.currentView.svg,
+                        viewThis = that.RLineageLayoutView.currentView,
+                        setGraphZoomPositionCal = that.RLineageLayoutView.currentView.setGraphZoomPositionCal,
+                        zoomed = that.RLineageLayoutView.currentView.zoomed;;
+
+                    if (zoom) {
+                        setGraphZoomPositionCal.call(viewThis);
+                        zoomed.call(viewThis);
+                        if ($(e.currentTarget).find('i').hasClass('fa fa-compress')) {
+                            svg.call(zoom)
+                                .on("dblclick.zoom", null);
+
+                        } else {
+                            svg.call(zoom)
+                                .on("wheel.zoom", null)
+                                .on("dblclick.zoom", null);
+                        }
+                    }
+                })
             },
             fetchCollection: function() {
                 this.collection.fetch({ reset: true });
             },
-            onCancelButtonClick: function() {
-                this.ui.description.show();
-                this.ui.editButton.show();
-                this.ui.editBox.hide();
+            getEntityDef: function(obj) {
+                var data = this.entityDefCollection.fullCollection.findWhere({ name: obj.entity.typeName }).toJSON();
+                var attributeDefs = Utils.getNestedSuperTypeObj({
+                    data: data,
+                    attrMerge: true,
+                    collection: this.entityDefCollection
+                });
+                obj['attributeDefs'] = attributeDefs;
+                this.renderEntityDetailTableLayoutView(obj);
+                this.renderAuditTableLayoutView(obj);
             },
             onClickTagCross: function(e) {
                 var tagName = $(e.currentTarget).parent().text(),
@@ -197,13 +258,13 @@ define(['require',
                     that = this;
                 if (tagOrTerm === "term") {
                     var modal = CommonViewFunction.deleteTagModel({
-                        msg: "<div class='ellipsis'>Remove: " + "<b>" + tagName + "</b> assignment from" + " " + "<b>" + this.name + "?</b></div>",
+                        msg: "<div class='ellipsis'>Remove: " + "<b>" + _.escape(tagName) + "</b> assignment from" + " " + "<b>" + this.name + "?</b></div>",
                         titleMessage: Messages.removeTerm,
                         buttonText: "Remove"
                     });
                 } else if (tagOrTerm === "tag") {
                     var modal = CommonViewFunction.deleteTagModel({
-                        msg: "<div class='ellipsis'>Remove: " + "<b>" + tagName + "</b> assignment from" + " " + "<b>" + this.name + "?</b></div>",
+                        msg: "<div class='ellipsis'>Remove: " + "<b>" + _.escape(tagName) + "</b> assignment from" + " " + "<b>" + this.name + "?</b></div>",
                         titleMessage: Messages.removeTag,
                         buttonText: "Remove"
                     });
@@ -220,6 +281,7 @@ define(['require',
             deleteTagData: function(e, tagOrTerm) {
                 var that = this,
                     tagName = $(e.currentTarget).text();
+                Utils.showTitleLoader(this.$('.page-title .fontLoader'), this.$('.entityDetail'));
                 CommonViewFunction.deleteTag({
                     'tagName': tagName,
                     'guid': that.id,
@@ -235,12 +297,11 @@ define(['require',
                     termData = "";
 
                 _.each(tagObject, function(val) {
-                    var isTerm = Utils.checkTagOrTerm(val);
-                    if (isTerm.tag) {
-                        tagData += '<span class="inputTag" data-id="tagClick"><span class="inputValue">' + isTerm.fullName + '</span><i class="fa fa-close" data-id="deleteTag" data-type="tag"></i></span>';
-                    }
-                    if (isTerm.term) {
-                        termData += '<span class="inputTag term" data-id="tagClick" data-href="' + isTerm.fullName + '"><span class="inputValue">' + isTerm.fullName + '</span><i class="fa fa-close" data-id="deleteTag" data-type="term"></i></span>';
+                    var checkTagOrTerm = Utils.checkTagOrTerm(val);
+                    if (checkTagOrTerm.term) {
+                        termData += '<span class="inputTag term" data-id="tagClick" data-href="' + val.typeName + '"><span class="inputValue">' + val.typeName + '</span><i class="fa fa-close" data-id="deleteTag" data-type="term"></i></span>';
+                    } else {
+                        tagData += '<span class="inputTag" data-id="tagClick"><span class="inputValue">' + val.typeName + '</span><i class="fa fa-close" data-id="deleteTag" data-type="tag"></i></span>';
                     }
                 });
                 this.ui.tagList.find("span.inputTag").remove();
@@ -248,41 +309,30 @@ define(['require',
                 this.ui.tagList.prepend(tagData);
                 this.ui.termList.prepend(termData);
             },
-            saveTagFromList: function(ref) {
-                var that = this;
-                this.entityModel = new VEntity();
-                var tagName = ref.text();
-                var json = {
-                    "jsonClass": "org.apache.atlas.typesystem.json.InstanceSerialization$_Struct",
-                    "typeName": tagName,
-                    "values": {}
-                };
-                this.entityModel.saveEntity(this.id, {
-                    data: JSON.stringify(json),
-                    success: function(data) {
-                        that.fetchCollection();
-                    },
-                    error: function(error, data, status) {
-                        if (error && error.responseText) {
-                            var data = JSON.parse(error.responseText);
-                        }
-                    },
-                    complete: function() {}
-                });
+            hideLoader: function() {
+                Utils.hideTitleLoader(this.$('.page-title .fontLoader'), this.$('.entityDetail'));
+            },
+            showLoader: function() {
+                Utils.showTitleLoader(this.$('.page-title .fontLoader'), this.$('.entityDetail'));
             },
             onClickAddTagBtn: function(e) {
                 var that = this;
                 require(['views/tag/addTagModalView'], function(AddTagModalView) {
                     var view = new AddTagModalView({
-                        vent: that.vent,
                         guid: that.id,
+                        tagList: _.map(that.entityObject.entity.classifications, function(obj) {
+                            return obj.typeName;
+                        }),
                         callback: function() {
                             that.fetchCollection();
-                        }
+                        },
+                        showLoader: that.showLoader.bind(that),
+                        hideLoader: that.hideLoader.bind(that),
+                        enumDefCollection: that.enumDefCollection
                     });
-                    /*view.saveTagData = function() {
-                    override saveTagData function 
-                    }*/
+                    view.modal.on('ok', function() {
+                        Utils.showTitleLoader(that.$('.page-title .fontLoader'), that.$('.entityDetail'));
+                    });
                 });
             },
             onClickAddTermBtn: function(e) {
@@ -294,68 +344,67 @@ define(['require',
                         guid: that.id,
                         callback: function() {
                             that.fetchCollection();
-                        }
+                        },
+                        showLoader: that.showLoader.bind(that),
+                        hideLoader: that.hideLoader.bind(that)
+                    });
+                    view.modal.on('ok', function() {
+                        Utils.showTitleLoader(that.$('.page-title .fontLoader'), that.$('.entityDetail'));
                     });
                 });
 
             },
-            renderEntityDetailTableLayoutView: function() {
+            renderEntityDetailTableLayoutView: function(obj) {
                 var that = this;
                 require(['views/entity/EntityDetailTableLayoutView'], function(EntityDetailTableLayoutView) {
-                    that.REntityDetailTableLayoutView.show(new EntityDetailTableLayoutView({
-                        globalVent: that.globalVent,
-                        collection: that.collection
-                    }));
+                    that.REntityDetailTableLayoutView.show(new EntityDetailTableLayoutView(obj));
                 });
             },
-            renderTagTableLayoutView: function(tagGuid) {
+            renderTagTableLayoutView: function(obj) {
                 var that = this;
                 require(['views/tag/TagDetailTableLayoutView'], function(TagDetailTableLayoutView) {
-                    that.RTagTableLayoutView.show(new TagDetailTableLayoutView({
-                        globalVent: that.globalVent,
-                        collection: that.collection,
-                        guid: tagGuid,
-                        assetName: that.name
-                    }));
+                    that.RTagTableLayoutView.show(new TagDetailTableLayoutView(obj));
                 });
             },
-            renderLineageLayoutView: function(tagGuid) {
+            renderTermTableLayoutView: function(obj) {
+                var that = this;
+                require(['views/tag/TagDetailTableLayoutView'], function(TagDetailTableLayoutView) {
+                    that.RTermTableLayoutView.show(new TagDetailTableLayoutView(obj));
+                });
+            },
+            renderLineageLayoutView: function(obj) {
                 var that = this;
                 require(['views/graph/LineageLayoutView'], function(LineageLayoutView) {
-                    that.RLineageLayoutView.show(new LineageLayoutView({
-                        globalVent: that.globalVent,
-                        guid: tagGuid
-                    }));
+                    that.RLineageLayoutView.show(new LineageLayoutView(obj));
                 });
             },
-            renderSchemaLayoutView: function(tagGuid) {
+            renderSchemaLayoutView: function(obj) {
                 var that = this;
                 require(['views/schema/SchemaLayoutView'], function(SchemaLayoutView) {
-                    that.RSchemaTableLayoutView.show(new SchemaLayoutView({
-                        globalVent: that.globalVent,
-                        guid: tagGuid
-                    }));
+                    that.RSchemaTableLayoutView.show(new SchemaLayoutView(obj));
                 });
             },
-            renderAuditTableLayoutView: function(tagGuid) {
+            renderAuditTableLayoutView: function(obj) {
                 var that = this;
                 require(['views/audit/AuditTableLayoutView'], function(AuditTableLayoutView) {
-                    that.RAuditTableLayoutView.show(new AuditTableLayoutView({
-                        globalVent: that.globalVent,
-                        guid: tagGuid
-                    }));
+                    that.RAuditTableLayoutView.show(new AuditTableLayoutView(obj));
                 });
             },
-            renderTermTableLayoutView: function(tagGuid) {
+            onClickEditEntity: function(e) {
                 var that = this;
-                require(['views/tag/TagDetailTableLayoutView'], function(TagDetailTableLayoutView) {
-                    that.RTermTableLayoutView.show(new TagDetailTableLayoutView({
-                        globalVent: that.globalVent,
-                        collection: that.collection,
-                        guid: tagGuid,
-                        assetName: that.name,
-                        term: true
-                    }));
+                $(e.currentTarget).blur();
+                require([
+                    'views/entity/CreateEntityLayoutView'
+                ], function(CreateEntityLayoutView) {
+                    var view = new CreateEntityLayoutView({
+                        guid: that.id,
+                        entityDefCollection: that.entityDefCollection,
+                        typeHeaders: that.typeHeaders,
+                        callback: function() {
+                            that.fetchCollection();
+                        }
+                    });
+
                 });
             }
         });

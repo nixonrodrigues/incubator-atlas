@@ -20,7 +20,7 @@ package org.apache.atlas.query
 
 import java.util
 
-import com.thinkaurelius.titan.core.TitanGraph
+import org.apache.atlas.repository.graphdb.AtlasGraph
 import org.apache.atlas.query.Expressions._
 import org.apache.atlas.typesystem.ITypedStruct
 import org.apache.atlas.typesystem.json.{InstanceSerialization, Serialization}
@@ -73,8 +73,8 @@ trait ClosureQuery {
   sealed trait PathAttribute {
 
     def toExpr : Expression = this match {
-      case r : Relation => id(r.attributeName)
-      case rr : ReverseRelation => id(s"${rr.typeName}->${rr.attributeName}")
+      case r : Relation => fieldId(r.attributeName)
+      case rr : ReverseRelation => fieldId(s"${rr.typeName}->${rr.attributeName}")
     }
 
     def toFieldName : String = this match {
@@ -116,7 +116,7 @@ trait ClosureQuery {
   def withPath : Boolean
 
   def persistenceStrategy: GraphPersistenceStrategies
-  def g: TitanGraph
+  def g: AtlasGraph[_,_]
 
   def pathExpr : Expressions.Expression = {
     closureRelation.tail.foldLeft(closureRelation.head.toExpr)((b,a) => b.field(a.toFieldName))
@@ -124,9 +124,9 @@ trait ClosureQuery {
 
   def selectExpr(alias : String) : List[Expression] = {
     selectAttributes.map { _.map { a =>
-      id(alias).field(a).as(s"${alias}_$a")
+      fieldId(alias).field(a).as(s"${alias}_$a")
     }
-    }.getOrElse(List(id(alias)))
+    }.getOrElse(List(fieldId(alias)))
   }
 
   /**
@@ -147,15 +147,13 @@ trait ClosureQuery {
     QueryProcessor.evaluate(e, g, persistenceStrategy)
   }
 
-  def graph : GraphResult = {
+  def graph(res: GremlinQueryResult) : GraphResult = {
 
     if (!withPath) {
       throw new ExpressionException(expr, "Graph requested for non Path Query")
     }
 
     import scala.collection.JavaConverters._
-
-    val res = evaluate()
 
     val graphResType = TypeUtils.GraphResultStruct.createType(res.resultDataType.asInstanceOf[StructType])
     val vertexPayloadType = {
@@ -184,11 +182,10 @@ trait ClosureQuery {
      * foreach resultRow
      *   for each Path entry
      *     add an entry in the edges Map
-     *   add an entry for the Src Vertex to the vertex Map
-     *   add an entry for the Dest Vertex to the vertex Map
+     *   add an entry for the Src vertex to the vertex Map
+     *   add an entry for the Dest vertex to the vertex Map
      */
-    res.rows.map(_.asInstanceOf[StructInstance]).foreach { r =>
-
+    res.rows.asScala.map(_.asInstanceOf[StructInstance]).foreach { r =>
       val path = r.get(TypeUtils.ResultWithPathStruct.pathAttrName).asInstanceOf[java.util.List[_]].asScala
       val srcVertex = path.head.asInstanceOf[StructInstance]
 
@@ -237,11 +234,12 @@ trait SingleInstanceClosureQuery[T] extends ClosureQuery {
 
   override  def srcCondition(expr : Expression) : Expression = {
     expr.where(
-      Expressions.id(attributeToSelectInstance).`=`(Expressions.literal(attributeTyp, instanceValue))
+      Expressions.fieldId(attributeToSelectInstance).`=`(Expressions.literal(attributeTyp, instanceValue))
     )
   }
 }
 
+import scala.language.existentials;
 /**
  * A ClosureQuery to compute '''Lineage''' for Hive tables. Assumes the Lineage relation is captured in a ''CTAS''
  * type, and the table relations are captured as attributes from a CTAS instance to Table instances.
@@ -266,7 +264,7 @@ case class InputLineageClosureQuery(tableTypeName : String,
                                     selectAttributes : Option[List[String]],
                                     withPath : Boolean,
                                     persistenceStrategy: GraphPersistenceStrategies,
-                                    g: TitanGraph
+                                    g: AtlasGraph[_,_]
                         ) extends SingleInstanceClosureQuery[String] {
 
   val closureType : String = tableTypeName
@@ -306,7 +304,7 @@ case class OutputLineageClosureQuery(tableTypeName : String,
                                      selectAttributes : Option[List[String]],
                                      withPath : Boolean,
                                      persistenceStrategy: GraphPersistenceStrategies,
-                                     g: TitanGraph
+                                     g: AtlasGraph[_,_]
                              ) extends SingleInstanceClosureQuery[String] {
 
   val closureType : String = tableTypeName

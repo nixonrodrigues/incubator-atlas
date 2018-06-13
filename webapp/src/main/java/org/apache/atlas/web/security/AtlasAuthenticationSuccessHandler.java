@@ -18,11 +18,12 @@
 
 package org.apache.atlas.web.security;
 
-import org.apache.log4j.Logger;
-import org.codehaus.jackson.map.ObjectMapper;
 import org.json.simple.JSONObject;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
+import org.springframework.stereotype.Component;
 
 import javax.servlet.ServletException;
 import javax.servlet.http.HttpServletRequest;
@@ -30,9 +31,10 @@ import javax.servlet.http.HttpServletResponse;
 import java.io.IOException;
 
 
+@Component
 public class AtlasAuthenticationSuccessHandler implements AuthenticationSuccessHandler {
 
-    private static Logger LOG = Logger.getLogger(AuthenticationSuccessHandler.class);
+    private static Logger LOG = LoggerFactory.getLogger(AuthenticationSuccessHandler.class);
     @Override
     public void onAuthenticationSuccess(HttpServletRequest request, HttpServletResponse response,
                                         Authentication authentication) throws IOException, ServletException {
@@ -40,13 +42,16 @@ public class AtlasAuthenticationSuccessHandler implements AuthenticationSuccessH
         LOG.debug("Login Success " + authentication.getPrincipal());
 
         JSONObject json = new JSONObject();
-        ObjectMapper mapper = new ObjectMapper();
         json.put("msgDesc", "Success");
 
-        String jsonAsStr = mapper.writeValueAsString(json);
+        if (request.getSession() != null) { // incase of form based login mark it as local login in session
+            request.getSession().setAttribute("locallogin","true");
+            request.getServletContext().setAttribute(request.getSession().getId(), "locallogin");
+        }
+
         response.setContentType("application/json");
         response.setStatus(HttpServletResponse.SC_OK);
         response.setCharacterEncoding("UTF-8");
-        response.getWriter().write(jsonAsStr);
+        response.getWriter().write(json.toJSONString());
     }
 }

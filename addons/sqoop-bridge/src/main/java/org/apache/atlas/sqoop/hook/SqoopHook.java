@@ -23,11 +23,10 @@ import org.apache.atlas.ApplicationProperties;
 import org.apache.atlas.AtlasClient;
 import org.apache.atlas.AtlasConstants;
 import org.apache.atlas.hive.bridge.HiveMetaStoreBridge;
-import org.apache.atlas.hive.model.HiveDataModelGenerator;
 import org.apache.atlas.hive.model.HiveDataTypes;
 import org.apache.atlas.hook.AtlasHook;
+import org.apache.atlas.hook.AtlasHookException;
 import org.apache.atlas.notification.hook.HookNotification;
-import org.apache.atlas.sqoop.model.SqoopDataModelGenerator;
 import org.apache.atlas.sqoop.model.SqoopDataTypes;
 import org.apache.atlas.typesystem.Referenceable;
 import org.apache.commons.configuration.Configuration;
@@ -55,12 +54,25 @@ public class SqoopHook extends SqoopJobDataPublisher {
     public static final String ATLAS_CLUSTER_NAME = "atlas.cluster.name";
     public static final String DEFAULT_CLUSTER_NAME = "primary";
 
+    public static final String USER = "userName";
+    public static final String DB_STORE_TYPE = "dbStoreType";
+    public static final String DB_STORE_USAGE = "storeUse";
+    public static final String SOURCE = "source";
+    public static final String DESCRIPTION = "description";
+    public static final String STORE_URI = "storeUri";
+    public static final String OPERATION = "operation";
+    public static final String START_TIME = "startTime";
+    public static final String END_TIME = "endTime";
+    public static final String CMD_LINE_OPTS = "commandlineOpts";
+    // multiple inputs and outputs for process
+    public static final String INPUTS = "inputs";
+    public static final String OUTPUTS = "outputs";
+
     static {
         org.apache.hadoop.conf.Configuration.addDefaultResource("sqoop-site.xml");
     }
 
-    public Referenceable createHiveDatabaseInstance(String clusterName, String dbName)
-            throws Exception {
+    public Referenceable createHiveDatabaseInstance(String clusterName, String dbName) {
         Referenceable dbRef = new Referenceable(HiveDataTypes.HIVE_DB.getName());
         dbRef.set(AtlasConstants.CLUSTER_NAME_ATTRIBUTE, clusterName);
         dbRef.set(AtlasClient.NAME, dbName);
@@ -70,14 +82,14 @@ public class SqoopHook extends SqoopJobDataPublisher {
     }
 
     public Referenceable createHiveTableInstance(String clusterName, Referenceable dbRef,
-                                             String tableName, String dbName) throws Exception {
-        Referenceable tableRef = new Referenceable(HiveDataTypes.HIVE_TABLE.getName());
-        tableRef.set(AtlasClient.REFERENCEABLE_ATTRIBUTE_NAME,
-                HiveMetaStoreBridge.getTableQualifiedName(clusterName, dbName, tableName));
-        tableRef.set(AtlasClient.NAME, tableName.toLowerCase());
-        tableRef.set(HiveDataModelGenerator.DB, dbRef);
-        return tableRef;
-    }
+                                                 String tableName, String dbName) {
+            Referenceable tableRef = new Referenceable(HiveDataTypes.HIVE_TABLE.getName());
+            tableRef.set(AtlasClient.REFERENCEABLE_ATTRIBUTE_NAME,
+                    HiveMetaStoreBridge.getTableQualifiedName(clusterName, dbName, tableName));
+            tableRef.set(AtlasClient.NAME, tableName.toLowerCase());
+            tableRef.set(HiveMetaStoreBridge.DB, dbRef);
+            return tableRef;
+        }
 
     private Referenceable createDBStoreInstance(SqoopJobDataPublisher.Data data)
             throws ImportException {
@@ -94,11 +106,11 @@ public class SqoopHook extends SqoopJobDataPublisher {
         String name = getSqoopDBStoreName(data);
         storeRef.set(AtlasClient.NAME, name);
         storeRef.set(AtlasClient.REFERENCEABLE_ATTRIBUTE_NAME, name);
-        storeRef.set(SqoopDataModelGenerator.DB_STORE_TYPE, data.getStoreType());
-        storeRef.set(SqoopDataModelGenerator.DB_STORE_USAGE, usage);
-        storeRef.set(SqoopDataModelGenerator.STORE_URI, data.getUrl());
-        storeRef.set(SqoopDataModelGenerator.SOURCE, source);
-        storeRef.set(SqoopDataModelGenerator.DESCRIPTION, "");
+        storeRef.set(SqoopHook.DB_STORE_TYPE, data.getStoreType());
+        storeRef.set(SqoopHook.DB_STORE_USAGE, usage);
+        storeRef.set(SqoopHook.STORE_URI, data.getUrl());
+        storeRef.set(SqoopHook.SOURCE, source);
+        storeRef.set(SqoopHook.DESCRIPTION, "");
         storeRef.set(AtlasClient.OWNER, data.getUser());
         return storeRef;
     }
@@ -109,24 +121,24 @@ public class SqoopHook extends SqoopJobDataPublisher {
         final String sqoopProcessName = getSqoopProcessName(data, clusterName);
         procRef.set(AtlasClient.NAME, sqoopProcessName);
         procRef.set(AtlasClient.REFERENCEABLE_ATTRIBUTE_NAME, sqoopProcessName);
-        procRef.set(SqoopDataModelGenerator.OPERATION, data.getOperation());
+        procRef.set(SqoopHook.OPERATION, data.getOperation());
         if (isImportOperation(data)) {
-            procRef.set(SqoopDataModelGenerator.INPUTS, dbStoreRef);
-            procRef.set(SqoopDataModelGenerator.OUTPUTS, hiveTableRef);
+            procRef.set(SqoopHook.INPUTS, dbStoreRef);
+            procRef.set(SqoopHook.OUTPUTS, hiveTableRef);
         } else {
-            procRef.set(SqoopDataModelGenerator.INPUTS, hiveTableRef);
-            procRef.set(SqoopDataModelGenerator.OUTPUTS, dbStoreRef);
+            procRef.set(SqoopHook.INPUTS, hiveTableRef);
+            procRef.set(SqoopHook.OUTPUTS, dbStoreRef);
         }
-        procRef.set(SqoopDataModelGenerator.USER, data.getUser());
-        procRef.set(SqoopDataModelGenerator.START_TIME, new Date(data.getStartTime()));
-        procRef.set(SqoopDataModelGenerator.END_TIME, new Date(data.getEndTime()));
+        procRef.set(SqoopHook.USER, data.getUser());
+        procRef.set(SqoopHook.START_TIME, new Date(data.getStartTime()));
+        procRef.set(SqoopHook.END_TIME, new Date(data.getEndTime()));
 
         Map<String, String> sqoopOptionsMap = new HashMap<>();
         Properties options = data.getOptions();
         for (Object k : options.keySet()) {
             sqoopOptionsMap.put((String)k, (String) options.get(k));
         }
-        procRef.set(SqoopDataModelGenerator.CMD_LINE_OPTS, sqoopOptionsMap);
+        procRef.set(SqoopHook.CMD_LINE_OPTS, sqoopOptionsMap);
 
         return procRef;
     }
@@ -161,19 +173,24 @@ public class SqoopHook extends SqoopJobDataPublisher {
     }
 
     @Override
-    public void publish(SqoopJobDataPublisher.Data data) throws Exception {
-        Configuration atlasProperties = ApplicationProperties.get();
-        String clusterName = atlasProperties.getString(ATLAS_CLUSTER_NAME, DEFAULT_CLUSTER_NAME);
+    public void publish(SqoopJobDataPublisher.Data data) throws AtlasHookException {
+        try {
+            Configuration atlasProperties = ApplicationProperties.get();
+            String clusterName = atlasProperties.getString(ATLAS_CLUSTER_NAME, DEFAULT_CLUSTER_NAME);
 
-        Referenceable dbStoreRef = createDBStoreInstance(data);
-        Referenceable dbRef = createHiveDatabaseInstance(clusterName, data.getHiveDB());
-        Referenceable hiveTableRef = createHiveTableInstance(clusterName, dbRef,
-                data.getHiveTable(), data.getHiveDB());
-        Referenceable procRef = createSqoopProcessInstance(dbStoreRef, hiveTableRef, data, clusterName);
+            Referenceable dbStoreRef = createDBStoreInstance(data);
+            Referenceable dbRef = createHiveDatabaseInstance(clusterName, data.getHiveDB());
+            Referenceable hiveTableRef = createHiveTableInstance(clusterName, dbRef,
+                    data.getHiveTable(), data.getHiveDB());
+            Referenceable procRef = createSqoopProcessInstance(dbStoreRef, hiveTableRef, data, clusterName);
 
-        int maxRetries = atlasProperties.getInt(HOOK_NUM_RETRIES, 3);
-        HookNotification.HookNotificationMessage message =
-                new HookNotification.EntityCreateRequest(AtlasHook.getUser(), dbStoreRef, dbRef, hiveTableRef, procRef);
-        AtlasHook.notifyEntities(Arrays.asList(message), maxRetries);
+            int maxRetries = atlasProperties.getInt(HOOK_NUM_RETRIES, 3);
+            HookNotification.HookNotificationMessage message =
+                    new HookNotification.EntityCreateRequest(AtlasHook.getUser(), dbStoreRef, dbRef, hiveTableRef, procRef);
+            AtlasHook.notifyEntities(Arrays.asList(message), maxRetries);
+        }
+        catch(Exception e) {
+            throw new AtlasHookException("SqoopHook.publish() failed.", e);
+        }
     }
 }

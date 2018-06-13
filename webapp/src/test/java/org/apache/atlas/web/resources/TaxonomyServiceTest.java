@@ -18,23 +18,41 @@
 
 package org.apache.atlas.web.resources;
 
-import org.apache.atlas.AtlasConstants;
-import org.apache.atlas.AtlasException;
-import org.apache.atlas.catalog.*;
-import org.apache.atlas.services.MetadataService;
-import org.easymock.Capture;
-import org.testng.annotations.Test;
-
-import static org.easymock.EasyMock.*;
+import static org.easymock.EasyMock.capture;
+import static org.easymock.EasyMock.createNiceMock;
+import static org.easymock.EasyMock.createStrictMock;
+import static org.easymock.EasyMock.expect;
+import static org.easymock.EasyMock.newCapture;
+import static org.easymock.EasyMock.replay;
+import static org.easymock.EasyMock.verify;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertNull;
 import static org.testng.Assert.assertTrue;
 
+import java.net.URI;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.Map;
+
 import javax.ws.rs.core.PathSegment;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.UriInfo;
-import java.net.URI;
-import java.util.*;
+
+import org.apache.atlas.AtlasException;
+import org.apache.atlas.catalog.AtlasTypeSystem;
+import org.apache.atlas.catalog.JsonSerializer;
+import org.apache.atlas.catalog.Request;
+import org.apache.atlas.catalog.ResourceProvider;
+import org.apache.atlas.catalog.Result;
+import org.apache.atlas.catalog.TaxonomyResourceProvider;
+import org.apache.atlas.catalog.TermPath;
+import org.apache.atlas.exception.AtlasBaseException;
+import org.apache.atlas.services.MetadataService;
+import org.apache.atlas.store.AtlasTypeDefStore;
+import org.easymock.Capture;
+import org.testng.annotations.Test;
 
 /**
  * Unit tests for TaxonomyService.
@@ -44,6 +62,7 @@ public class TaxonomyServiceTest {
     public void testGetTaxonomy() throws Exception {
         String taxonomyName = "testTaxonomy";
         MetadataService metadataService = createStrictMock(MetadataService.class);
+        AtlasTypeDefStore typeDefStore = createStrictMock(AtlasTypeDefStore.class);
         ResourceProvider taxonomyResourceProvider = createStrictMock(ResourceProvider.class);
         ResourceProvider termResourceProvider = createStrictMock(ResourceProvider.class);
         UriInfo uriInfo = createNiceMock(UriInfo.class);
@@ -62,10 +81,8 @@ public class TaxonomyServiceTest {
         replay(uriInfo, metadataService, taxonomyResourceProvider, termResourceProvider, serializer);
 
         TestTaxonomyService service = new TestTaxonomyService(
-                metadataService, taxonomyResourceProvider, termResourceProvider, serializer);
+                metadataService, typeDefStore, taxonomyResourceProvider, termResourceProvider, serializer);
         Response response = service.getTaxonomy(null, uriInfo, taxonomyName);
-
-        assertTrue(service.wasTransactionInitialized());
 
         Request request = requestCapture.getValue();
         Map<String, Object> requestProperties = request.getQueryProperties();
@@ -75,12 +92,13 @@ public class TaxonomyServiceTest {
         assertEquals(response.getStatus(), 200);
         assertEquals(response.getEntity(), "Taxonomy Get Response");
 
-        verify(uriInfo, metadataService, taxonomyResourceProvider, termResourceProvider, serializer);
+        verify(uriInfo, taxonomyResourceProvider, termResourceProvider, serializer);
     }
 
     @Test
     public void testGetTaxonomies() throws Exception {
         MetadataService metadataService = createStrictMock(MetadataService.class);
+        AtlasTypeDefStore typeDefStore = createStrictMock(AtlasTypeDefStore.class);
         ResourceProvider taxonomyResourceProvider = createStrictMock(ResourceProvider.class);
         ResourceProvider termResourceProvider = createStrictMock(ResourceProvider.class);
         UriInfo uriInfo = createNiceMock(UriInfo.class);
@@ -103,10 +121,8 @@ public class TaxonomyServiceTest {
 
         // instantiate service and invoke method being tested
         TestTaxonomyService service = new TestTaxonomyService(
-                metadataService, taxonomyResourceProvider, termResourceProvider, serializer);
+                metadataService, typeDefStore, taxonomyResourceProvider, termResourceProvider, serializer);
         Response response = service.getTaxonomies(null, uriInfo);
-
-        assertTrue(service.wasTransactionInitialized());
 
         Request request = requestCapture.getValue();
         assertTrue(request.getQueryProperties().isEmpty());
@@ -115,12 +131,13 @@ public class TaxonomyServiceTest {
         assertEquals(response.getStatus(), 200);
         assertEquals(response.getEntity(), "Taxonomy Get Response");
 
-        verify(uriInfo, metadataService, taxonomyResourceProvider, termResourceProvider, serializer);
+        verify(uriInfo, taxonomyResourceProvider, termResourceProvider, serializer);
     }
 
     @Test
     public void testCreateTaxonomy() throws Exception {
         MetadataService metadataService = createStrictMock(MetadataService.class);
+        AtlasTypeDefStore typeDefStore = createStrictMock(AtlasTypeDefStore.class);
         ResourceProvider taxonomyResourceProvider = createStrictMock(ResourceProvider.class);
         ResourceProvider termResourceProvider = createStrictMock(ResourceProvider.class);
         UriInfo uriInfo = createNiceMock(UriInfo.class);
@@ -136,10 +153,8 @@ public class TaxonomyServiceTest {
 
         // instantiate service and invoke method being tested
         TestTaxonomyService service = new TestTaxonomyService(
-                metadataService, taxonomyResourceProvider, termResourceProvider, null);
+            metadataService, typeDefStore, taxonomyResourceProvider, termResourceProvider, null);
         Response response = service.createTaxonomy(body, null, uriInfo, "testTaxonomy");
-
-        assertTrue(service.wasTransactionInitialized());
 
         Request request = requestCapture.getValue();
         assertEquals(request.getQueryProperties().size(), 2);
@@ -152,12 +167,13 @@ public class TaxonomyServiceTest {
         assertEquals(createResults.href, "http://localhost:21000/api/atlas/v1/taxonomies/testTaxonomy");
         assertEquals(createResults.status, 201);
 
-        verify(uriInfo, metadataService, taxonomyResourceProvider, termResourceProvider);
+        verify(uriInfo, taxonomyResourceProvider, termResourceProvider);
     }
 
     @Test
     public void testDeleteTaxonomy() throws Exception {
         MetadataService metadataService = createStrictMock(MetadataService.class);
+        AtlasTypeDefStore typeDefStore = createStrictMock(AtlasTypeDefStore.class);
         ResourceProvider taxonomyResourceProvider = createStrictMock(ResourceProvider.class);
         ResourceProvider termResourceProvider = createStrictMock(ResourceProvider.class);
         UriInfo uriInfo = createNiceMock(UriInfo.class);
@@ -172,10 +188,8 @@ public class TaxonomyServiceTest {
 
         // instantiate service and invoke method being tested
         TestTaxonomyService service = new TestTaxonomyService(
-                metadataService, taxonomyResourceProvider, termResourceProvider, null);
+            metadataService, typeDefStore, taxonomyResourceProvider, termResourceProvider, null);
         Response response = service.deleteTaxonomy(null, uriInfo, "testTaxonomy");
-
-        assertTrue(service.wasTransactionInitialized());
 
         Request request = requestCapture.getValue();
         assertEquals(request.getQueryProperties().size(), 1);
@@ -187,7 +201,7 @@ public class TaxonomyServiceTest {
         assertEquals(createResults.href, "http://localhost:21000/api/atlas/v1/taxonomies/testTaxonomy");
         assertEquals(createResults.status, 200);
 
-        verify(uriInfo, metadataService, taxonomyResourceProvider, termResourceProvider);
+        verify(uriInfo, taxonomyResourceProvider, termResourceProvider);
     }
 
     @Test
@@ -195,6 +209,7 @@ public class TaxonomyServiceTest {
         String taxonomyName = "testTaxonomy";
         String termName = "testTaxonomy.termName";
         MetadataService metadataService = createStrictMock(MetadataService.class);
+        AtlasTypeDefStore typeDefStore = createStrictMock(AtlasTypeDefStore.class);
         ResourceProvider taxonomyResourceProvider = createStrictMock(ResourceProvider.class);
         ResourceProvider termResourceProvider = createStrictMock(ResourceProvider.class);
         UriInfo uriInfo = createNiceMock(UriInfo.class);
@@ -213,10 +228,8 @@ public class TaxonomyServiceTest {
         replay(uriInfo, metadataService, taxonomyResourceProvider, termResourceProvider, serializer);
 
         TestTaxonomyService service = new TestTaxonomyService(
-                metadataService, taxonomyResourceProvider, termResourceProvider, serializer);
+            metadataService, typeDefStore, taxonomyResourceProvider, termResourceProvider, serializer);
         Response response = service.getTaxonomyTerm(null, uriInfo, taxonomyName, termName);
-
-        assertTrue(service.wasTransactionInitialized());
 
         Request request = requestCapture.getValue();
         Map<String, Object> requestProperties = request.getQueryProperties();
@@ -227,12 +240,13 @@ public class TaxonomyServiceTest {
         assertEquals(response.getStatus(), 200);
         assertEquals(response.getEntity(), "Taxonomy Term Get Response");
 
-        verify(uriInfo, metadataService, taxonomyResourceProvider, termResourceProvider, serializer);
+        verify(uriInfo, taxonomyResourceProvider, termResourceProvider, serializer);
     }
 
     @Test
     public void testGetTaxonomyTerms() throws Exception {
         MetadataService metadataService = createStrictMock(MetadataService.class);
+        AtlasTypeDefStore typeDefStore = createStrictMock(AtlasTypeDefStore.class);
         ResourceProvider taxonomyResourceProvider = createStrictMock(ResourceProvider.class);
         ResourceProvider termResourceProvider = createStrictMock(ResourceProvider.class);
         UriInfo uriInfo = createNiceMock(UriInfo.class);
@@ -255,10 +269,8 @@ public class TaxonomyServiceTest {
 
         // instantiate service and invoke method being tested
         TestTaxonomyService service = new TestTaxonomyService(
-                metadataService, taxonomyResourceProvider, termResourceProvider, serializer);
+            metadataService, typeDefStore, taxonomyResourceProvider, termResourceProvider, serializer);
         Response response = service.getTaxonomyTerms(null, uriInfo, "testTaxonomy");
-
-        assertTrue(service.wasTransactionInitialized());
 
         Request request = requestCapture.getValue();
         assertEquals(request.getQueryProperties().size(), 1);
@@ -269,12 +281,13 @@ public class TaxonomyServiceTest {
         assertEquals(response.getStatus(), 200);
         assertEquals(response.getEntity(), "Taxonomy Term Get Response");
 
-        verify(uriInfo, metadataService, taxonomyResourceProvider, termResourceProvider, serializer);
+        verify(uriInfo, taxonomyResourceProvider, termResourceProvider, serializer);
     }
 
     @Test
     public void testGetSubTerms_instance() throws Exception {
         MetadataService metadataService = createStrictMock(MetadataService.class);
+        AtlasTypeDefStore typeDefStore = createStrictMock(AtlasTypeDefStore.class);
         ResourceProvider taxonomyResourceProvider = createStrictMock(ResourceProvider.class);
         ResourceProvider termResourceProvider = createStrictMock(ResourceProvider.class);
         UriInfo uriInfo = createNiceMock(UriInfo.class);
@@ -304,10 +317,8 @@ public class TaxonomyServiceTest {
 
         // instantiate service and invoke method being tested
         TestTaxonomyService service = new TestTaxonomyService(
-                metadataService, taxonomyResourceProvider, termResourceProvider, serializer);
+            metadataService, typeDefStore, taxonomyResourceProvider, termResourceProvider, serializer);
         Response response = service.getSubTerms(null, uriInfo, "testTaxonomy", "testTerm", "/terms/testTerm2");
-
-        assertTrue(service.wasTransactionInitialized());
 
         Request request = requestCapture.getValue();
         assertEquals(request.getQueryProperties().size(), 1);
@@ -318,13 +329,14 @@ public class TaxonomyServiceTest {
         assertEquals(response.getStatus(), 200);
         assertEquals(response.getEntity(), "Taxonomy Term Get Response");
 
-        verify(uriInfo, metadataService, taxonomyResourceProvider, termResourceProvider, serializer,
+        verify(uriInfo, taxonomyResourceProvider, termResourceProvider, serializer,
                 segment1, segment2, segment3);
     }
 
     @Test
     public void testGetSubTerms_collection() throws Exception {
         MetadataService metadataService = createStrictMock(MetadataService.class);
+        AtlasTypeDefStore typeDefStore = createStrictMock(AtlasTypeDefStore.class);
         ResourceProvider taxonomyResourceProvider = createStrictMock(ResourceProvider.class);
         ResourceProvider termResourceProvider = createStrictMock(ResourceProvider.class);
         UriInfo uriInfo = createNiceMock(UriInfo.class);
@@ -356,10 +368,8 @@ public class TaxonomyServiceTest {
 
         // instantiate service and invoke method being tested
         TestTaxonomyService service = new TestTaxonomyService(
-                metadataService, taxonomyResourceProvider, termResourceProvider, serializer);
+            metadataService, typeDefStore, taxonomyResourceProvider, termResourceProvider, serializer);
         Response response = service.getSubTerms(null, uriInfo, "testTaxonomy", "testTerm", "/terms/testTerm2/terms");
-
-        assertTrue(service.wasTransactionInitialized());
 
         Request request = requestCapture.getValue();
         assertEquals(request.getQueryProperties().size(), 1);
@@ -370,7 +380,7 @@ public class TaxonomyServiceTest {
         assertEquals(response.getStatus(), 200);
         assertEquals(response.getEntity(), "Taxonomy Term Get Response");
 
-        verify(uriInfo, metadataService, taxonomyResourceProvider, termResourceProvider, serializer,
+        verify(uriInfo, taxonomyResourceProvider, termResourceProvider, serializer,
                 segment1, segment2, segment3);
     }
 
@@ -379,6 +389,7 @@ public class TaxonomyServiceTest {
         String taxonomyName = "testTaxonomy";
         String termName = "testTerm";
         MetadataService metadataService = createStrictMock(MetadataService.class);
+        AtlasTypeDefStore typeDefStore = createStrictMock(AtlasTypeDefStore.class);
         ResourceProvider taxonomyResourceProvider = createStrictMock(ResourceProvider.class);
         ResourceProvider termResourceProvider = createStrictMock(ResourceProvider.class);
         UriInfo uriInfo = createNiceMock(UriInfo.class);
@@ -394,10 +405,8 @@ public class TaxonomyServiceTest {
 
         // instantiate service and invoke method being tested
         TestTaxonomyService service = new TestTaxonomyService(
-                metadataService, taxonomyResourceProvider, termResourceProvider, null);
+            metadataService, typeDefStore, taxonomyResourceProvider, termResourceProvider, null);
         Response response = service.createTerm(body, null, uriInfo, taxonomyName, termName);
-
-        assertTrue(service.wasTransactionInitialized());
 
         Request request = requestCapture.getValue();
         assertEquals(request.getQueryProperties().size(), 2);
@@ -411,7 +420,7 @@ public class TaxonomyServiceTest {
         assertEquals(createResults.href, "http://localhost:21000/api/atlas/v1/taxonomies/testTaxonomy/terms/testTerm");
         assertEquals(createResults.status, 201);
 
-        verify(uriInfo, metadataService, taxonomyResourceProvider, termResourceProvider);
+        verify(uriInfo, taxonomyResourceProvider, termResourceProvider);
     }
 
     @Test
@@ -419,6 +428,7 @@ public class TaxonomyServiceTest {
         String taxonomyName = "testTaxonomy";
         String termName = "testTerm";
         MetadataService metadataService = createStrictMock(MetadataService.class);
+        AtlasTypeDefStore typeDefStore = createStrictMock(AtlasTypeDefStore.class);
         ResourceProvider taxonomyResourceProvider = createStrictMock(ResourceProvider.class);
         ResourceProvider termResourceProvider = createStrictMock(ResourceProvider.class);
         UriInfo uriInfo = createNiceMock(UriInfo.class);
@@ -434,10 +444,8 @@ public class TaxonomyServiceTest {
 
         // instantiate service and invoke method being tested
         TestTaxonomyService service = new TestTaxonomyService(
-                metadataService, taxonomyResourceProvider, termResourceProvider, null);
+            metadataService, typeDefStore, taxonomyResourceProvider, termResourceProvider, null);
         Response response = service.createSubTerm(body, null, uriInfo, taxonomyName, termName, "/terms/testTerm2");
-
-        assertTrue(service.wasTransactionInitialized());
 
         Request request = requestCapture.getValue();
         assertEquals(request.getQueryProperties().size(), 2);
@@ -451,12 +459,13 @@ public class TaxonomyServiceTest {
         assertEquals(createResults.href, "http://localhost:21000/api/atlas/v1/taxonomies/testTaxonomy/terms/testTerm/terms/testTerm2");
         assertEquals(createResults.status, 201);
 
-        verify(uriInfo, metadataService, taxonomyResourceProvider, termResourceProvider);
+        verify(uriInfo, taxonomyResourceProvider, termResourceProvider);
     }
 
     @Test
     public void testDeleteTerm() throws Exception {
         MetadataService metadataService = createStrictMock(MetadataService.class);
+        AtlasTypeDefStore typeDefStore = createStrictMock(AtlasTypeDefStore.class);
         ResourceProvider taxonomyResourceProvider = createStrictMock(ResourceProvider.class);
         ResourceProvider termResourceProvider = createStrictMock(ResourceProvider.class);
         UriInfo uriInfo = createNiceMock(UriInfo.class);
@@ -471,10 +480,8 @@ public class TaxonomyServiceTest {
 
         // instantiate service and invoke method being tested
         TestTaxonomyService service = new TestTaxonomyService(
-                metadataService, taxonomyResourceProvider, termResourceProvider, null);
+            metadataService, typeDefStore, taxonomyResourceProvider, termResourceProvider, null);
         Response response = service.deleteTerm(null, uriInfo, "testTaxonomy", "testTerm");
-
-        assertTrue(service.wasTransactionInitialized());
 
         Request request = requestCapture.getValue();
         assertEquals(request.getQueryProperties().size(), 1);
@@ -487,12 +494,13 @@ public class TaxonomyServiceTest {
         assertEquals(createResults.href, "http://localhost:21000/api/atlas/v1/taxonomies/testTaxonomy/terms/testTerm");
         assertEquals(createResults.status, 200);
 
-        verify(uriInfo, metadataService, taxonomyResourceProvider, termResourceProvider);
+        verify(uriInfo, taxonomyResourceProvider, termResourceProvider);
     }
 
     @Test
     public void testDeleteSubTerm() throws Exception {
         MetadataService metadataService = createStrictMock(MetadataService.class);
+        AtlasTypeDefStore typeDefStore = createStrictMock(AtlasTypeDefStore.class);
         ResourceProvider taxonomyResourceProvider = createStrictMock(ResourceProvider.class);
         ResourceProvider termResourceProvider = createStrictMock(ResourceProvider.class);
         UriInfo uriInfo = createNiceMock(UriInfo.class);
@@ -507,10 +515,8 @@ public class TaxonomyServiceTest {
 
         // instantiate service and invoke method being tested
         TestTaxonomyService service = new TestTaxonomyService(
-                metadataService, taxonomyResourceProvider, termResourceProvider, null);
+            metadataService, typeDefStore, taxonomyResourceProvider, termResourceProvider, null);
         Response response = service.deleteSubTerm(null, uriInfo, "testTaxonomy", "testTerm", "terms/testTerm2");
-
-        assertTrue(service.wasTransactionInitialized());
 
         Request request = requestCapture.getValue();
         assertEquals(request.getQueryProperties().size(), 1);
@@ -523,7 +529,7 @@ public class TaxonomyServiceTest {
         assertEquals(createResults.href, "http://localhost:21000/api/atlas/v1/taxonomies/testTaxonomy/terms/testTerm/terms/testTerm2");
         assertEquals(createResults.status, 200);
 
-        verify(uriInfo, metadataService, taxonomyResourceProvider, termResourceProvider);
+        verify(uriInfo, taxonomyResourceProvider, termResourceProvider);
     }
 
     private static class TestTaxonomyService extends TaxonomyService {
@@ -533,14 +539,15 @@ public class TaxonomyServiceTest {
         private boolean transactionInitialized = false;
 
         public TestTaxonomyService(MetadataService metadataService,
+                                   AtlasTypeDefStore typeDefStore,
                                    ResourceProvider taxonomyProvider,
                                    ResourceProvider termResourceProvider,
-                                   JsonSerializer serializer) throws AtlasException {
+                                   JsonSerializer serializer) throws AtlasBaseException {
 
             testTaxonomyResourceProvider = taxonomyProvider;
             testTermResourceProvider = termResourceProvider;
             testSerializer = serializer;
-            setMetadataService(metadataService);
+            setMetadataService(metadataService, typeDefStore);
         }
 
         @Override
@@ -558,13 +565,5 @@ public class TaxonomyServiceTest {
             return testSerializer;
         }
 
-        @Override
-        protected void initializeGraphTransaction() {
-            transactionInitialized = true;
-        }
-
-        public boolean wasTransactionInitialized() {
-            return transactionInitialized;
-        }
     }
 }

@@ -18,8 +18,7 @@
 
 //tag.scss
 .tag-tree {
-    padding: 0;
-    overflow: auto;
+    padding: 0; // overflow: auto;
     li {
         list-style: none;
         cursor: pointer;
@@ -38,7 +37,7 @@
                     display: block
                 }
             }
-            > ul > li {
+            >ul>li {
                 line-height: 30px;
                 margin-left: -20px;
                 text-indent: 20px;
@@ -64,6 +63,7 @@
             text-overflow: ellipsis;
             max-width: 91%;
             overflow: hidden;
+            font-size: 14px;
         }
     }
     ul {
@@ -92,7 +92,7 @@
     cursor: pointer;
 }
 
-.input-group.attributes .form-control:focus + .input-group-addon {
+.input-group.attributes .form-control:focus+.input-group-addon {
     border-color: $color_bali_hai_approx;
 }
 
@@ -103,16 +103,6 @@
 
 .tagListSelect {
     margin: 15px 0px;
-}
-
-.select2-container--default .select2-selection--multiple .select2-selection__choice {
-    background-color: #fff;
-    color: #9599a0;
-    border: 1px solid $tag_color;
-}
-
-.select2-container--default .select2-search--inline .select2-search__field {
-    color: #555;
 }
 
 .inputTag {
@@ -140,7 +130,7 @@
             background-color: $tag_color;
         }
     }
-    > .inputValue {
+    >.inputValue {
         padding: 5px;
         &:hover {
             color: $white;
@@ -151,8 +141,8 @@
 
 .inputTagAdd {
     display: inline-block;
-    border: 1px #4A90E2 solid;
-    color: #4A90E2;
+    border: 1px $color_havelock_blue_approx solid;
+    color: $color_havelock_blue_approx;
     font-size: 14px;
     border-radius: 4px;
     margin-right: 3px;
@@ -262,6 +252,10 @@
     }
 }
 
+.superType {
+    margin-bottom: 15px;
+}
+
 form-control .tagInpput {
     margin-bottom: 15px;
     margin-top: 15px;
@@ -294,7 +288,15 @@ form-control .tagInpput {
     float: left;
     padding: 2px 10px 2px 0px;
     font-weight: 600;
-    width: 70px
+    width: 70px;
+    margin-right: 5px;
+}
+
+.superTypeLabel {
+    font-weight: 600;
+    width: 90px;
+    margin-right: 5px;
+    float: left;
 }
 
 .inputAssignTag {
@@ -310,11 +312,6 @@ form-control .tagInpput {
     cursor: pointer;
     background-color: $white;
     white-space: nowrap;
-    // i.fa {
-    //     position: relative;
-    //     right: -5px;
-    //     cursor: pointer;
-    // }
     &:hover {
         color: $color_dark_grey_approx;
         background-color: $color_mercury_approx;
@@ -323,6 +320,18 @@ form-control .tagInpput {
 
 .multiSelect {
     float: right;
+}
+
+.multiSelectTerm {
+    float: right;
+}
+
+.multiSelectTag {
+    float: right;
+}
+
+.inputAssignTag.multiSelectTag {
+    margin-right: 10px;
 }
 
 .popover.popoverTag {
@@ -335,7 +344,7 @@ form-control .tagInpput {
     margin-top: 10px;
 }
 
-.popoverContainer .inputTag > .inputValue {
+.popoverContainer .inputTag>.inputValue {
     padding: 2px 5px;
     display: inline-block;
     width: 100px;
@@ -343,4 +352,89 @@ form-control .tagInpput {
 
 .tagAttributeLabel {
     color: $color_star_dust_approx;
+}
+
+fieldset.scheduler-border {
+    border-top: 1px solid #999 !important;
+    padding: 0 1em 0em 1em !important;
+    margin: 0 0 .5em 0 !important;
+}
+
+legend.scheduler-border {
+    width: auto;
+    padding: 0 5px;
+    border-bottom: none;
+    font-size: 16px;
+    margin-left: 50%;
+    margin-bottom: 10px;
+    color: #555;
+}
+
+.requiredInput {
+    color: #d20606;
+}
+
+.spanEntityType {
+    cursor: help;
+    width: 100%;
+    display: block;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 14px;
+    color: #a7a19f;
+}
+
+.errorClass {
+    border: 1px solid red !important;
+    box-shadow: none !important;
+}
+
+.attributeTag {
+    padding: 5px 8px;
+    border: 1px solid #999999;
+    color: #999999;
+    border-radius: 1px;
+    cursor: pointer
+}
+
+.attrTopMargin {
+    margin-top: 15px;
+}
+
+.topMargin {
+    margin-top: 13px;
+}
+
+.entityLink {
+    font-size: 16px;
+}
+
+.mainAttrTable {
+    max-height: 180px;
+    overflow: auto;
+    overflow-x: hidden;
+}
+
+table.attriTable {
+    width: 100%;
+    td {
+        border: 1px solid #ddd;
+        padding: 5px 7px;
+        width: 50%;
+        &[data-type="int"],
+        &[data-type="long"],
+        &[data-type="float"],
+        &[data-type="byte"],
+        &[data-type="double"],
+        &[data-type="short"] {
+            text-align: right;
+        }
+    }
+    th {
+        text-align: center !important;
+        border: 1px solid #ddd;
+        padding: 5px 7px;
+        width: 50%;
+    }
 }

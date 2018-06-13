@@ -24,7 +24,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 
-import org.apache.log4j.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.beans.factory.config.PropertyPlaceholderConfigurer;
 
@@ -32,9 +33,9 @@ import org.springframework.beans.factory.config.PropertyPlaceholderConfigurer;
  * Util class for Properties.
  */
 public final class PropertiesUtil extends PropertyPlaceholderConfigurer {
-    private static Map<String, String> propertiesMap = new HashMap<String, String>();
-    private static Logger logger = Logger.getLogger(PropertiesUtil.class);
-    protected List<String> xmlPropertyConfigurer = new ArrayList<String>();
+    private static Map<String, String> propertiesMap = new HashMap<>();
+    private static Logger logger = LoggerFactory.getLogger(PropertiesUtil.class);
+    protected List<String> xmlPropertyConfigurer = new ArrayList<>();
 
     private PropertiesUtil() {
 

@@ -26,31 +26,39 @@ import java.util.Iterator;
  * @param <V> vertex class used by the graph
  * @param <E> edge class used by the graph
  */
-public interface AtlasIndexQuery<V,E> {
+public interface AtlasIndexQuery<V, E> {
 
     /**
      * Gets the query results.
-     * 
+     *
      * @return
      */
-    Iterator<Result<V,E>> vertices();
+    Iterator<Result<V, E>> vertices();
 
-    /** 
+    /**
+     * Gets the query results
+     * @param offset starting offset
+     * @param limit max number of results
+     * @return
+     */
+    Iterator<Result<V, E>> vertices(int offset, int limit);
+
+    /**
      * Query result from an index query.
-     * 
+     *
      * @param <V>
      * @param <E>
      */
-    public interface Result<V,E> {
-        
+    interface Result<V, E> {
+
         /**
-         * Gets the vertex for this result
+         * Gets the vertex for this result.
          */
-        AtlasVertex<V,E> getVertex();
-        
+        AtlasVertex<V, E> getVertex();
+
         /**
          * Gets the score for this result.
-         * 
+         *
          */
         double getScore();
 

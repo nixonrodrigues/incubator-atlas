@@ -18,12 +18,11 @@
 
 package org.apache.atlas.repository.graph;
 
-import com.tinkerpop.blueprints.Vertex;
-
 import org.apache.atlas.AtlasClient;
 import org.apache.atlas.AtlasException;
 import org.apache.atlas.TestUtils;
 import org.apache.atlas.repository.Constants;
+import org.apache.atlas.repository.graphdb.AtlasVertex;
 import org.apache.atlas.typesystem.IReferenceableInstance;
 import org.apache.atlas.typesystem.IStruct;
 import org.apache.atlas.typesystem.ITypedReferenceableInstance;
@@ -80,7 +79,7 @@ public class GraphBackedRepositoryHardDeleteTest extends GraphBackedMetadataRepo
             repositoryService.getEntityDefinition(id);
             fail("Expected EntityNotFoundException");
         } catch(EntityNotFoundException e) {
-            //expected
+            // expected
         }
     }
 
@@ -99,7 +98,7 @@ public class GraphBackedRepositoryHardDeleteTest extends GraphBackedMetadataRepo
     }
 
     @Override
-    protected void assertVerticesDeleted(List<Vertex> vertices) {
+    protected void assertVerticesDeleted(List<AtlasVertex> vertices) {
         assertEquals(vertices.size(), 0);
     }
 
@@ -171,10 +170,10 @@ public class GraphBackedRepositoryHardDeleteTest extends GraphBackedMetadataRepo
         assertNull(mapOwnerInstance.get("map"));
         assertNull(mapOwnerInstance.get("biMap"));
 
-        Vertex mapOwnerVertex = GraphHelper.getInstance().getVertexForGUID(mapOwnerGuid);
-        Object object = mapOwnerVertex.getProperty("MapOwner.map.value1");
+        AtlasVertex mapOwnerVertex = GraphHelper.getInstance().getVertexForGUID(mapOwnerGuid);
+        Object object = mapOwnerVertex.getProperty("MapOwner.map.value1", String.class);
         assertNull(object);
-        object = mapOwnerVertex.getProperty("MapOwner.biMap.value1");
+        object = mapOwnerVertex.getProperty("MapOwner.biMap.value1", String.class);
         assertNull(object);
     }
 
@@ -183,5 +182,31 @@ public class GraphBackedRepositoryHardDeleteTest extends GraphBackedMetadataRepo
 
         Assert.fail("Lower bound on attribute Manager.subordinates was not enforced - " +
             NullRequiredAttributeException.class.getSimpleName() + " was expected but none thrown");
+    }
+
+    @Override
+    protected void assertTestLowerBoundsIgnoredOnDeletedEntities(List<ITypedReferenceableInstance> employees) {
+
+        Assert.assertEquals(employees.size(), 1, "References to deleted employees were not disconnected");
+    }
+
+    @Override
+    protected void assertTestLowerBoundsIgnoredOnCompositeDeletedEntities(String hrDeptGuid) throws Exception {
+
+        try {
+            repositoryService.getEntityDefinition(hrDeptGuid);
+            Assert.fail(EntityNotFoundException.class.getSimpleName() + " was expected but none thrown");
+        }
+        catch (EntityNotFoundException e) {
+            // good
+        }
+    }
+
+    @Override
+    protected void verifyTestDeleteEntityWithDuplicateReferenceListElements(List columnsPropertyValue) {
+
+        // With hard deletes enabled, verify that duplicate edge IDs for deleted edges
+        // were removed from the array property list.
+        Assert.assertEquals(columnsPropertyValue.size(), 2);
     }
 }

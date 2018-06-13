@@ -18,15 +18,11 @@
 
 package org.apache.atlas.discovery.graph;
 
-import com.thinkaurelius.titan.core.TitanGraph;
-import com.thinkaurelius.titan.core.TitanIndexQuery;
-import com.thinkaurelius.titan.core.TitanProperty;
-import com.thinkaurelius.titan.core.TitanVertex;
-import com.tinkerpop.blueprints.Vertex;
 import org.apache.atlas.AtlasClient;
-import org.apache.atlas.GraphTransaction;
+import org.apache.atlas.annotation.GraphTransaction;
 import org.apache.atlas.discovery.DiscoveryException;
 import org.apache.atlas.discovery.DiscoveryService;
+import org.apache.atlas.exception.AtlasBaseException;
 import org.apache.atlas.query.Expressions;
 import org.apache.atlas.query.GremlinEvaluator;
 import org.apache.atlas.query.GremlinQuery;
@@ -38,22 +34,25 @@ import org.apache.atlas.query.QueryProcessor;
 import org.apache.atlas.repository.Constants;
 import org.apache.atlas.repository.MetadataRepository;
 import org.apache.atlas.repository.graph.GraphHelper;
-import org.apache.atlas.repository.graph.GraphProvider;
+import org.apache.atlas.repository.graphdb.AtlasEdge;
+import org.apache.atlas.repository.graphdb.AtlasGraph;
+import org.apache.atlas.repository.graphdb.AtlasIndexQuery;
+import org.apache.atlas.repository.graphdb.AtlasVertex;
+import org.apache.atlas.util.CompiledQueryCacheKey;
+import org.apache.atlas.util.NoopGremlinQuery;
 import org.codehaus.jettison.json.JSONArray;
 import org.codehaus.jettison.json.JSONException;
 import org.codehaus.jettison.json.JSONObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
 import scala.util.Either;
 import scala.util.parsing.combinator.Parsers;
 
 import javax.inject.Inject;
 import javax.inject.Singleton;
-import javax.script.Bindings;
-import javax.script.ScriptEngine;
-import javax.script.ScriptEngineManager;
-import javax.script.ScriptException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -63,23 +62,40 @@ import java.util.Map;
  * Graph backed implementation of Search.
  */
 @Singleton
+@Component
 public class GraphBackedDiscoveryService implements DiscoveryService {
 
     private static final Logger LOG = LoggerFactory.getLogger(GraphBackedDiscoveryService.class);
 
-    private final TitanGraph titanGraph;
+    private final AtlasGraph graph;
     private final DefaultGraphPersistenceStrategy graphPersistenceStrategy;
 
     public final static String SCORE = "score";
+    /**
+     * Where the vertex' internal gremlin id is stored in the Map produced by extractResult()
+     */
+    public final static String GREMLIN_ID_KEY = "id";
+    /**
+     * Where the id of an edge's incoming vertex is stored in the Map produced by extractResult()
+     */
+    public final static String GREMLIN_INVERTEX_KEY = "inVertex";
+    /**
+     * Where the id of an edge's outgoing vertex is stored in the Map produced by extractResult()
+     */
+    public final static String GREMLIN_OUTVERTEX_KEY = "outVertex";
+    /**
+     * Where an edge's label is stored in the Map produced by extractResult()
+     */
+    public final static String GREMLIN_LABEL_KEY = "label";
 
     @Inject
-    GraphBackedDiscoveryService(GraphProvider<TitanGraph> graphProvider, MetadataRepository metadataRepository)
+    GraphBackedDiscoveryService(MetadataRepository metadataRepository, AtlasGraph atlasGraph)
     throws DiscoveryException {
-        this.titanGraph = graphProvider.get();
+        this.graph = atlasGraph;
         this.graphPersistenceStrategy = new DefaultGraphPersistenceStrategy(metadataRepository);
     }
 
-    //Refer http://s3.thinkaurelius.com/docs/titan/0.5.4/index-backends.html for indexed query
+    //For titan 0.5.4, refer to http://s3.thinkaurelius.com/docs/titan/0.5.4/index-backends.html for indexed query
     //http://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-query-string-query
     // .html#query-string-syntax for query syntax
     @Override
@@ -87,8 +103,7 @@ public class GraphBackedDiscoveryService implements DiscoveryService {
     public String searchByFullText(String query, QueryParams queryParams) throws DiscoveryException {
         String graphQuery = String.format("v.\"%s\":(%s)", Constants.ENTITY_TEXT_PROPERTY_KEY, query);
         LOG.debug("Full text query: {}", graphQuery);
-        Iterator<TitanIndexQuery.Result<Vertex>> results =
-                titanGraph.indexQuery(Constants.FULLTEXT_INDEX, graphQuery).vertices().iterator();
+        Iterator<AtlasIndexQuery.Result<?, ?>> results =graph.indexQuery(Constants.FULLTEXT_INDEX, graphQuery).vertices();
         JSONArray response = new JSONArray();
 
         int index = 0;
@@ -98,11 +113,12 @@ public class GraphBackedDiscoveryService implements DiscoveryService {
         }
 
         while (results.hasNext() && response.length() < queryParams.limit()) {
-            TitanIndexQuery.Result<Vertex> result = results.next();
-            Vertex vertex = result.getElement();
+
+            AtlasIndexQuery.Result<?,?> result = results.next();
+            AtlasVertex<?,?> vertex = result.getVertex();
 
             JSONObject row = new JSONObject();
-            String guid = GraphHelper.getIdFromVertex(vertex);
+            String guid = GraphHelper.getGuid(vertex);
             if (guid != null) { //Filter non-class entities
                 try {
                     row.put("guid", guid);
@@ -127,35 +143,57 @@ public class GraphBackedDiscoveryService implements DiscoveryService {
     }
 
     public GremlinQueryResult evaluate(String dslQuery, QueryParams queryParams) throws DiscoveryException {
-        LOG.debug("Executing dsl query={}", dslQuery);
+        if(LOG.isDebugEnabled()) {
+            LOG.debug("Executing dsl query={}", dslQuery);
+        }
         try {
-            Either<Parsers.NoSuccess, Expressions.Expression> either = QueryParser.apply(dslQuery, queryParams);
-            if (either.isRight()) {
-                Expressions.Expression expression = either.right().get();
-                return evaluate(dslQuery, expression);
-            } else {
-                throw new DiscoveryException("Invalid expression : " + dslQuery + ". " + either.left());
+            GremlinQuery gremlinQuery = parseAndTranslateDsl(dslQuery, queryParams);
+            if(gremlinQuery instanceof NoopGremlinQuery) {
+                return new GremlinQueryResult(dslQuery, ((NoopGremlinQuery)gremlinQuery).getDataType(), Collections.emptyList());
             }
+
+            return new GremlinEvaluator(gremlinQuery, graphPersistenceStrategy, graph).evaluate();
+
         } catch (Exception e) { // unable to catch ExpressionException
             throw new DiscoveryException("Invalid expression : " + dslQuery, e);
         }
     }
 
-    private GremlinQueryResult evaluate(String dslQuery, Expressions.Expression expression) {
-        Expressions.Expression validatedExpression = QueryProcessor.validate(expression);
+    private GremlinQuery parseAndTranslateDsl(String dslQuery, QueryParams queryParams) throws DiscoveryException {
 
-        //If the final limit is 0, don't launch the query, return with 0 rows
-        if (validatedExpression instanceof Expressions.LimitExpression
-                && ((Integer)((Expressions.LimitExpression) validatedExpression).limit().rawValue()) == 0) {
-            return new GremlinQueryResult(dslQuery, validatedExpression.dataType(),
-                    scala.collection.immutable.List.empty());
+        CompiledQueryCacheKey entry = new CompiledQueryCacheKey(dslQuery, queryParams);
+        GremlinQuery gremlinQuery = QueryProcessor.compiledQueryCache().get(entry);
+        if(gremlinQuery == null) {
+            Expressions.Expression validatedExpression = parseQuery(dslQuery, queryParams);
+
+            //If the final limit is 0, don't launch the query, return with 0 rows
+            if (validatedExpression instanceof Expressions.LimitExpression
+                    && ((Integer)((Expressions.LimitExpression) validatedExpression).limit().rawValue()) == 0) {
+                gremlinQuery = new NoopGremlinQuery(validatedExpression.dataType());
+            }
+            else {
+                gremlinQuery = new GremlinTranslator(validatedExpression, graphPersistenceStrategy).translate();
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("Query = {}", validatedExpression);
+                    LOG.debug("Expression Tree = {}", validatedExpression.treeString());
+                    LOG.debug("Gremlin Query = {}", gremlinQuery.queryStr());
+                }
+            }
+            QueryProcessor.compiledQueryCache().put(entry, gremlinQuery);
+        }
+        return gremlinQuery;
+    }
+
+    private Expressions.Expression parseQuery(String dslQuery, QueryParams queryParams) throws DiscoveryException {
+        Either<Parsers.NoSuccess, Expressions.Expression> either = QueryParser.apply(dslQuery, queryParams);
+        if (either.isRight()) {
+            Expressions.Expression expression = either.right().get();
+            Expressions.Expression validatedExpression = QueryProcessor.validate(expression);
+            return validatedExpression;
+        } else {
+            throw new DiscoveryException("Invalid expression : " + dslQuery + ". " + either.left());
         }
 
-        GremlinQuery gremlinQuery = new GremlinTranslator(validatedExpression, graphPersistenceStrategy).translate();
-        LOG.debug("Query = {}", validatedExpression);
-        LOG.debug("Expression Tree = {}", validatedExpression.treeString());
-        LOG.debug("Gremlin Query = {}", gremlinQuery.queryStr());
-        return new GremlinEvaluator(gremlinQuery, graphPersistenceStrategy, titanGraph).evaluate();
     }
 
     /**
@@ -171,21 +209,11 @@ public class GraphBackedDiscoveryService implements DiscoveryService {
     @GraphTransaction
     public List<Map<String, String>> searchByGremlin(String gremlinQuery) throws DiscoveryException {
         LOG.debug("Executing gremlin query={}", gremlinQuery);
-        ScriptEngineManager manager = new ScriptEngineManager();
-        ScriptEngine engine = manager.getEngineByName("gremlin-groovy");
-
-        if(engine == null) {
-            throw new DiscoveryException("gremlin-groovy: engine not found");
-        }
-
-        Bindings bindings = engine.createBindings();
-        bindings.put("g", titanGraph);
-
         try {
-            Object o = engine.eval(gremlinQuery, bindings);
+            Object o = graph.executeGremlinScript(gremlinQuery, false);
             return extractResult(o);
-        } catch (ScriptException se) {
-            throw new DiscoveryException(se);
+        } catch (AtlasBaseException e) {
+            throw new DiscoveryException(e);
         }
     }
 
@@ -193,35 +221,45 @@ public class GraphBackedDiscoveryService implements DiscoveryService {
         List<Map<String, String>> result = new ArrayList<>();
         if (o instanceof List) {
             List l = (List) o;
-            for (Object r : l) {
 
+            for (Object value : l) {
                 Map<String, String> oRow = new HashMap<>();
-                if (r instanceof Map) {
-                    @SuppressWarnings("unchecked") Map<Object, Object> iRow = (Map) r;
+                if (value instanceof Map) {
+                    @SuppressWarnings("unchecked") Map<Object, Object> iRow = (Map) value;
                     for (Map.Entry e : iRow.entrySet()) {
                         Object k = e.getKey();
                         Object v = e.getValue();
                         oRow.put(k.toString(), v.toString());
                     }
-                } else if (r instanceof TitanVertex) {
-                    Iterable<TitanProperty> ps = ((TitanVertex) r).getProperties();
-                    for (TitanProperty tP : ps) {
-                        String pName = tP.getPropertyKey().getName();
-                        Object pValue = ((TitanVertex) r).getProperty(pName);
-                        if (pValue != null) {
-                            oRow.put(pName, pValue.toString());
+                } else if (value instanceof AtlasVertex) {
+                    AtlasVertex<?,?> vertex = (AtlasVertex<?,?>)value;
+                    for (String key : vertex.getPropertyKeys()) {
+                        Object propertyValue = GraphHelper.getProperty(vertex,  key);
+                        if (propertyValue != null) {
+                            oRow.put(key, propertyValue.toString());
                         }
                     }
+                    oRow.put(GREMLIN_ID_KEY, vertex.getId().toString());
 
-                } else if (r instanceof String) {
-                    oRow.put("", r.toString());
+                } else if (value instanceof String) {
+                    oRow.put("", value.toString());
+                } else if(value instanceof AtlasEdge) {
+                    AtlasEdge edge = (AtlasEdge) value;
+                    oRow.put(GREMLIN_ID_KEY, edge.getId().toString());
+                    oRow.put(GREMLIN_LABEL_KEY, edge.getLabel());
+                    oRow.put(GREMLIN_INVERTEX_KEY, edge.getInVertex().getId().toString());
+                    oRow.put(GREMLIN_OUTVERTEX_KEY, edge.getOutVertex().getId().toString());
+                    for (String propertyKey : edge.getPropertyKeys()) {
+                        oRow.put(propertyKey, GraphHelper.getProperty(edge, propertyKey).toString());
+                    }
                 } else {
-                    throw new DiscoveryException(String.format("Cannot process result %s", o.toString()));
+                    throw new DiscoveryException(String.format("Cannot process result %s", String.valueOf(value)));
                 }
 
                 result.add(oRow);
             }
-        } else {
+        }
+        else {
             result.add(new HashMap<String, String>() {{
                 put("result", o.toString());
             }});

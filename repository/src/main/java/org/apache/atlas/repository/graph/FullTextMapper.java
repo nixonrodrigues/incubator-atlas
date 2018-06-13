@@ -17,10 +17,12 @@
  */
 package org.apache.atlas.repository.graph;
 
-import com.tinkerpop.blueprints.Vertex;
 import org.apache.atlas.AtlasException;
+import org.apache.atlas.RequestContext;
+import org.apache.atlas.repository.graphdb.AtlasVertex;
 import org.apache.atlas.typesystem.ITypedInstance;
 import org.apache.atlas.typesystem.ITypedReferenceableInstance;
+import org.apache.atlas.typesystem.persistence.Id;
 import org.apache.atlas.typesystem.types.AttributeInfo;
 import org.apache.atlas.typesystem.types.DataTypes;
 import org.apache.atlas.typesystem.types.EnumValue;
@@ -29,37 +31,45 @@ import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+@Deprecated
 public class FullTextMapper {
 
     private static final Logger LOG = LoggerFactory.getLogger(FullTextMapper.class);
 
     private final GraphToTypedInstanceMapper graphToTypedInstanceMapper;
+    private final TypedInstanceToGraphMapper typedInstanceToGraphMapper;
 
     private static final GraphHelper graphHelper = GraphHelper.getInstance();
 
     private static final String FULL_TEXT_DELIMITER = " ";
-    private final Map<String, ITypedReferenceableInstance> instanceCache;
 
-    FullTextMapper(GraphToTypedInstanceMapper graphToTypedInstanceMapper) {
+    public FullTextMapper(TypedInstanceToGraphMapper typedInstanceToGraphMapper,
+                          GraphToTypedInstanceMapper graphToTypedInstanceMapper) {
         this.graphToTypedInstanceMapper = graphToTypedInstanceMapper;
-        instanceCache = new HashMap<>();
+        this.typedInstanceToGraphMapper = typedInstanceToGraphMapper;
     }
 
-    public String mapRecursive(Vertex instanceVertex, boolean followReferences) throws AtlasException {
-        String guid = GraphHelper.getIdFromVertex(instanceVertex);
+    public String mapRecursive(AtlasVertex instanceVertex, boolean followReferences) throws AtlasException {
+        String guid = GraphHelper.getGuid(instanceVertex);
         ITypedReferenceableInstance typedReference;
-        if (instanceCache.containsKey(guid)) {
-            typedReference = instanceCache.get(guid);
-            LOG.debug("Cache hit: guid = {}, entityId = {}", guid, typedReference.getId()._getId());
+        RequestContext context = RequestContext.get();
+        typedReference = context.getInstanceV1(guid);
+        if (typedReference != null) {
+
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("Cache hit: guid = {}, entityId = {}", guid, typedReference.getId()._getId());
+            }
         } else {
             typedReference =
                     graphToTypedInstanceMapper.mapGraphToTypedInstance(guid, instanceVertex);
-            instanceCache.put(guid, typedReference);
-            LOG.debug("Cache miss: guid = {}, entityId = {}", guid, typedReference.getId().getId());
+            context.cache(typedReference);
+
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("Cache miss: guid = {}, entityId = {}", guid, typedReference.getId().getId());
+            }
         }
         String fullText = forInstance(typedReference, followReferences);
         StringBuilder fullTextBuilder =
@@ -120,8 +130,12 @@ public class FullTextMapper {
 
         case CLASS:
             if (followReferences) {
-                String refGuid = ((ITypedReferenceableInstance) value).getId()._getId();
-                Vertex refVertex = graphHelper.getVertexForGUID(refGuid);
+                Id refId = ((ITypedReferenceableInstance) value).getId();
+                String refGuid = refId._getId();
+                AtlasVertex refVertex = typedInstanceToGraphMapper.lookupVertex(refId);
+                if(refVertex == null) {
+                    refVertex = graphHelper.getVertexForGUID(refGuid);
+                }
                 return mapRecursive(refVertex, false);
             }
             break;
